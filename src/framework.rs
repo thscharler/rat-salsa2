@@ -10,6 +10,7 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use log::debug;
 use ratatui::backend::CrosstermBackend;
+use ratatui::buffer::Buffer;
 use ratatui::{Frame, Terminal};
 use std::cmp::min;
 use std::collections::VecDeque;
@@ -26,7 +27,7 @@ pub trait TuiApp {
     type Action;
     type Error;
 
-    /// Get the timer state for this uistate.
+    /// Get the timers for this app.
     #[allow(unused_variables)]
     fn get_timers<'b>(&self, uistate: &'b Self::State) -> Option<&'b Timers> {
         None
@@ -181,7 +182,7 @@ where
     // to not starve any event source everyone is polled and put in this queue.
     // they are not polled again before the queue is not empty.
     let mut poll_queue = VecDeque::new();
-    let mut poll_sleep = 10;
+    let mut poll_sleep = Duration::from_millis(10);
 
     // init
     match app.init(data, uistate, &worker.send) {
@@ -212,10 +213,11 @@ where
                 }
             }
             if poll_queue.is_empty() {
-                let t = calculate_sleep(app, uistate, Duration::from_millis(poll_sleep));
+                let t = calculate_sleep(app, uistate, poll_sleep);
                 sleep(t);
-                if poll_sleep < 10 {
-                    poll_sleep = 10;
+                if poll_sleep < Duration::from_millis(10) {
+                    // Back off slowly.
+                    poll_sleep += Duration::from_micros(100);
                 }
                 Ok(Control::Continue)
             } else {
@@ -228,7 +230,7 @@ where
                 // the shorter sleep it's still not instantaneous but ok-ish.
                 // For all other cases 10ms seems to work fine.
                 // Note: could make this configurable too.
-                poll_sleep = 0;
+                poll_sleep = Duration::from_micros(100);
 
                 match poll_queue.pop_front() {
                     None => Ok(Control::Continue),
