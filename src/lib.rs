@@ -1,10 +1,11 @@
 use rat_event::util::Outcome;
+use rat_event::UsedEvent;
+use rat_widget::menuline::MenuOutcome;
 
 mod framework;
 mod timer;
 
-pub use framework::{run_tui, RunConfig, TuiApp};
-use rat_widget::menuline::MenuOutcome;
+pub use framework::{run_tui, AppContext, AppWidget, RenderContext, RunConfig, TuiApp};
 pub use timer::{TimeOut, TimerDef, TimerEvent, Timers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -20,6 +21,12 @@ pub enum Control<Action> {
     Action(Action),
     /// Quit the application.
     Quit,
+}
+
+impl<Action> UsedEvent for Control<Action> {
+    fn used_event(&self) -> bool {
+        true
+    }
 }
 
 /// Breaks the control-flow.
@@ -65,4 +72,9 @@ pub enum RepaintEvent {
     Change,
     /// A timer triggered this.
     Timer(TimeOut),
+}
+
+mod _private {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct NonExhaustive;
 }

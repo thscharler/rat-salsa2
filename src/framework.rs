@@ -1,3 +1,4 @@
+use crate::_private::NonExhaustive;
 use crate::{Control, RepaintEvent, TimeOut, TimerEvent, Timers};
 use crossbeam::channel::{bounded, unbounded, Receiver, SendError, Sender, TryRecvError};
 use crossterm::cursor::{DisableBlinking, EnableBlinking, SetCursorStyle};
@@ -11,7 +12,8 @@ use crossterm::ExecutableCommand;
 use log::debug;
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
-use ratatui::{Frame, Terminal};
+use ratatui::layout::{Position, Rect};
+use ratatui::Terminal;
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -26,25 +28,23 @@ pub trait TuiApp {
     type State;
     type Action;
     type Error;
+    type Theme;
+    type Global;
 
-    /// Get the timers for this app.
-    #[allow(unused_variables)]
-    fn get_timers<'b>(&self, uistate: &'b Self::State) -> Option<&'b Timers> {
-        None
-    }
+    fn theme(&self) -> &Self::Theme;
 
     /// Initialize the application. Runs before the first repaint.
     fn init(
         &self,
+        ctx: &mut AppContext<'_, Self>,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> Result<(), Self::Error>;
 
     /// Repaint everything.
     fn repaint(
         &self,
-        frame: &mut Frame<'_>,
+        ctx: &mut RenderContext<'_, Self>,
         event: RepaintEvent,
         data: &mut Self::Data,
         uistate: &mut Self::State,
@@ -53,28 +53,28 @@ pub trait TuiApp {
     /// Timeout event.
     fn timer(
         &self,
+        ctx: &mut AppContext<'_, Self>,
         event: TimeOut,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> Result<Control<Self::Action>, Self::Error>;
 
     /// Crossterm event.
     fn crossterm(
         &self,
+        ctx: &mut AppContext<'_, Self>,
         event: crossterm::event::Event,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> Result<Control<Self::Action>, Self::Error>;
 
     /// Run an action.
     fn action(
         &self,
+        ctx: &mut AppContext<'_, Self>,
         event: Self::Action,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> Result<Control<Self::Action>, Self::Error>;
 
     /// Run a background task.
@@ -87,14 +87,50 @@ pub trait TuiApp {
     /// Do error handling.
     fn error(
         &self,
+        ctx: &mut AppContext<'_, Self>,
         event: Self::Error,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> Result<Control<Self::Action>, Self::Error>;
 
     /// Runs some shutdown operations after the tui has quit.
     fn shutdown(&self, data: &mut Self::Data) -> Result<(), Self::Error>;
+}
+
+#[derive(Debug)]
+pub struct AppContext<'a, App: TuiApp + ?Sized> {
+    pub g: &'a mut App::Global,
+    pub theme: &'a App::Theme,
+    pub timers: &'a Timers,
+    pub tasks: &'a Sender<App::Action>,
+
+    pub non_exhaustive: NonExhaustive,
+}
+
+#[derive(Debug)]
+pub struct RenderContext<'a, App: TuiApp + ?Sized> {
+    pub g: &'a mut App::Global,
+    pub theme: &'a App::Theme,
+    pub timers: &'a Timers,
+    pub tasks: &'a Sender<App::Action>,
+
+    pub counter: usize,
+    pub area: Rect,
+    pub buffer: &'a mut Buffer,
+    pub cursor: Option<Position>,
+
+    pub non_exhaustive: NonExhaustive,
+}
+
+pub trait AppWidget<App: TuiApp> {
+    fn render<'a>(
+        &self,
+        ctx: &mut RenderContext<'a, App>,
+        event: RepaintEvent,
+        area: Rect,
+        data: &mut App::Data,
+        uistate: &mut App::State,
+    ) -> Result<(), App::Error>;
 }
 
 enum PollNext {
@@ -127,6 +163,7 @@ pub fn run_tui<App: TuiApp>(
 where
     App::Action: Send + 'static,
     App::Error: Send + 'static + From<TryRecvError> + From<io::Error> + From<SendError<()>>,
+    App::Global: Default,
     App: Sync,
 {
     stdout().execute(EnterAlternateScreen)?;
@@ -172,12 +209,23 @@ fn _run_tui<App: TuiApp>(
 where
     App::Action: Send + 'static,
     App::Error: Send + 'static + From<TryRecvError> + From<io::Error> + From<SendError<()>>,
+    App::Global: Default,
     App: Sync,
 {
     let mut term = Terminal::new(CrosstermBackend::new(stdout()))?;
     term.clear()?;
 
-    let mut worker = ThreadPool::<App>::build(app, cfg.n_threats);
+    let mut global = App::Global::default();
+    let timers = Timers::default();
+    let worker = ThreadPool::<App>::build(app, cfg.n_threats);
+
+    let mut appctx = AppContext {
+        g: &mut global,
+        theme: app.theme(),
+        timers: &timers,
+        tasks: &worker.send,
+        non_exhaustive: NonExhaustive,
+    };
 
     // to not starve any event source everyone is polled and put in this queue.
     // they are not polled again before the queue is not empty.
@@ -185,7 +233,7 @@ where
     let mut poll_sleep = Duration::from_millis(10);
 
     // init
-    match app.init(data, uistate, &worker.send) {
+    match app.init(&mut appctx, data, uistate) {
         Err(err) => {
             return Err(err);
         }
@@ -193,16 +241,27 @@ where
     };
 
     // initial repaint.
-    _ = repaint_tui(&mut term, app, data, uistate, RepaintEvent::Change)?;
+    _ = repaint_tui(
+        app,
+        &mut appctx,
+        &mut term,
+        RepaintEvent::Change,
+        data,
+        uistate,
+    )?;
 
     let mut flow = Ok(Control::Continue);
-    'ui: loop {
+    let nice = 'ui: loop {
         // panic on worker panic
-        worker.check_liveness();
+        if !worker.check_liveness() {
+            break 'ui false;
+        }
+
+        appctx.theme = app.theme();
 
         flow = if matches!(flow, Ok(Control::Continue)) {
             if poll_queue.is_empty() {
-                if poll_timers(app, uistate) {
+                if poll_timers(app, &mut appctx) {
                     poll_queue.push_back(PollNext::Timers);
                 }
                 if poll_workers(app, &worker) {
@@ -213,7 +272,7 @@ where
                 }
             }
             if poll_queue.is_empty() {
-                let t = calculate_sleep(app, uistate, poll_sleep);
+                let t = calculate_sleep(app, &mut appctx, poll_sleep);
                 sleep(t);
                 if poll_sleep < Duration::from_millis(10) {
                     // Back off slowly.
@@ -235,10 +294,10 @@ where
                 match poll_queue.pop_front() {
                     None => Ok(Control::Continue),
                     Some(PollNext::Timers) => {
-                        read_timers(&mut term, app, data, uistate, &worker.send)
+                        read_timers(app, &mut appctx, &mut term, data, uistate)
                     }
                     Some(PollNext::Workers) => read_workers(app, &worker),
-                    Some(PollNext::Crossterm) => read_crossterm(app, data, uistate, &worker.send),
+                    Some(PollNext::Crossterm) => read_crossterm(app, &mut appctx, data, uistate),
                 }
             }
         } else {
@@ -248,26 +307,37 @@ where
         flow = match flow {
             Ok(Control::Continue) => Ok(Control::Continue),
             Ok(Control::Break) => Ok(Control::Continue),
-            Ok(Control::Repaint) => {
-                repaint_tui(&mut term, app, data, uistate, RepaintEvent::Change)
-            }
-            Ok(Control::Action(action)) => app.action(action, data, uistate, &worker.send),
-            Ok(Control::Quit) => break 'ui,
-            Err(e) => app.error(e, data, uistate, &worker.send),
+            Ok(Control::Repaint) => repaint_tui(
+                app,
+                &mut appctx,
+                &mut term,
+                RepaintEvent::Change,
+                data,
+                uistate,
+            ),
+            Ok(Control::Action(action)) => app.action(&mut appctx, action, data, uistate),
+            Ok(Control::Quit) => break 'ui true,
+            Err(e) => app.error(&mut appctx, e, data, uistate),
         }
-    }
+    };
 
-    worker.stop_and_join();
+    if nice {
+        worker.stop_and_join();
+    } else {
+        worker.stop_and_join();
+        panic!("worker panicked");
+    }
 
     Ok(())
 }
 
 fn repaint_tui<App: TuiApp>(
-    term: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &App,
+    ctx: &mut AppContext<'_, App>,
+    term: &mut Terminal<CrosstermBackend<Stdout>>,
+    reason: RepaintEvent,
     data: &mut App::Data,
     uistate: &mut App::State,
-    reason: RepaintEvent,
 ) -> Result<Control<App::Action>, App::Error>
 where
     App::Error: From<io::Error>,
@@ -277,42 +347,50 @@ where
     _ = term.hide_cursor();
 
     term.draw(|frame| {
+        let mut ctx = RenderContext {
+            g: ctx.g,
+            theme: ctx.theme,
+            timers: ctx.timers,
+            tasks: ctx.tasks,
+            counter: frame.count(),
+            area: frame.size(),
+            buffer: frame.buffer_mut(),
+            cursor: None,
+            non_exhaustive: NonExhaustive,
+        };
+
         res = app
-            .repaint(frame, reason, data, uistate)
+            .repaint(&mut ctx, reason, data, uistate)
             .map(|_| Control::Continue);
+
+        if let Some(cursor) = ctx.cursor {
+            frame.set_cursor(cursor.x, cursor.y);
+        }
     })?;
 
     res
 }
 
-fn poll_timers<App: TuiApp>(app: &App, uistate: &mut App::State) -> bool {
-    if let Some(timers) = app.get_timers(uistate) {
-        timers.poll()
-    } else {
-        false
-    }
+fn poll_timers<App: TuiApp>(_app: &App, ctx: &mut AppContext<'_, App>) -> bool {
+    ctx.timers.poll()
 }
 
 fn read_timers<App: TuiApp>(
-    term: &mut Terminal<CrosstermBackend<Stdout>>,
     app: &App,
+    ctx: &mut AppContext<'_, App>,
+    term: &mut Terminal<CrosstermBackend<Stdout>>,
     data: &mut App::Data,
     uistate: &mut App::State,
-    send: &Sender<App::Action>,
 ) -> Result<Control<App::Action>, App::Error>
 where
     App::Error: From<io::Error>,
 {
-    if let Some(timers) = app.get_timers(uistate) {
-        match timers.read() {
-            Some(TimerEvent::Repaint(evt)) => {
-                repaint_tui(term, app, data, uistate, RepaintEvent::Timer(evt))
-            }
-            Some(TimerEvent::Application(evt)) => app.timer(evt, data, uistate, send),
-            None => Ok(Control::Continue),
+    match ctx.timers.read() {
+        Some(TimerEvent::Repaint(evt)) => {
+            repaint_tui(app, ctx, term, RepaintEvent::Timer(evt), data, uistate)
         }
-    } else {
-        Ok(Control::Continue)
+        Some(TimerEvent::Application(evt)) => app.timer(ctx, evt, data, uistate),
+        None => Ok(Control::Continue),
     }
 }
 
@@ -343,26 +421,26 @@ fn poll_crossterm<App: TuiApp>(_app: &App) -> Result<bool, io::Error> {
 
 fn read_crossterm<App: TuiApp>(
     app: &App,
+    ctx: &mut AppContext<'_, App>,
     data: &mut App::Data,
     uistate: &mut App::State,
-    send: &Sender<App::Action>,
 ) -> Result<Control<App::Action>, App::Error>
 where
     App::Error: From<io::Error>,
 {
     match crossterm::event::read() {
-        Ok(evt) => app.crossterm(evt, data, uistate, send),
+        Ok(evt) => app.crossterm(ctx, evt, data, uistate),
         Err(err) => Err(err.into()),
     }
 }
 
-fn calculate_sleep<App: TuiApp>(app: &App, uistate: &mut App::State, max: Duration) -> Duration {
-    if let Some(timers) = app.get_timers(uistate) {
-        if let Some(sleep) = timers.sleep_time() {
-            min(sleep, max)
-        } else {
-            max
-        }
+fn calculate_sleep<App: TuiApp>(
+    _app: &App,
+    ctx: &mut AppContext<'_, App>,
+    max: Duration,
+) -> Duration {
+    if let Some(sleep) = ctx.timers.sleep_time() {
+        min(sleep, max)
     } else {
         max
     }
@@ -427,18 +505,13 @@ where
     ///
     /// Panic:
     /// Panics if any of the workers panicked themselves.
-    fn check_liveness(&mut self) {
-        let mut all_alive = true;
+    fn check_liveness(&self) -> bool {
         for h in &self.handles {
             if h.is_finished() {
-                all_alive = false;
+                return false;
             }
         }
-
-        if !all_alive {
-            shutdown_thread_pool(self);
-            panic!("worker panicked");
-        }
+        true
     }
 
     /// Is the channel empty?
