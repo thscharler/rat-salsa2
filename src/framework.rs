@@ -97,32 +97,48 @@ pub trait TuiApp {
     fn shutdown(&self, data: &mut Self::Data) -> Result<(), Self::Error>;
 }
 
+/// A collection of context data used by the application.
 #[derive(Debug)]
 pub struct AppContext<'a, App: TuiApp + ?Sized> {
+    /// Some global data for the application.
     pub g: &'a mut App::Global,
+    /// Theme data.
     pub theme: &'a App::Theme,
+    /// Application timers.
     pub timers: &'a Timers,
+    /// Start background tasks.
     pub tasks: &'a Sender<App::Action>,
 
     pub non_exhaustive: NonExhaustive,
 }
 
+/// A collection of context data used for rendering.
 #[derive(Debug)]
 pub struct RenderContext<'a, App: TuiApp + ?Sized> {
+    /// Some global data for the application.
     pub g: &'a mut App::Global,
+    /// Theme data.
     pub theme: &'a App::Theme,
+    /// Application timers.
     pub timers: &'a Timers,
+    /// Start background tasks.
     pub tasks: &'a Sender<App::Action>,
 
+    /// Frame counter.
     pub counter: usize,
+    /// Frame area.
     pub area: Rect,
+    /// Buffer.
     pub buffer: &'a mut Buffer,
+    /// Output cursor position. Set after rendering is complete.
     pub cursor: Option<Position>,
 
     pub non_exhaustive: NonExhaustive,
 }
 
+/// I like traits. Therefore, one more for some application level widget.
 pub trait AppWidget<App: TuiApp> {
+    /// Renders an application widget.
     fn render<'a>(
         &self,
         ctx: &mut RenderContext<'a, App>,
