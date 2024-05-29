@@ -4,7 +4,9 @@ use crossbeam::channel::Sender;
 use crossterm::event::Event;
 use rat_event::FocusKeys;
 use rat_event::HandleEvent;
-use rat_salsa2::{flow, run_tui, Control, RepaintEvent, RunConfig, TimeOut, Timers, TuiApp};
+use rat_salsa2::{
+    flow, run_tui, AppContext, Control, RenderContext, RepaintEvent, RunConfig, TimeOut, TuiApp,
+};
 use rat_widget::button::ButtonStyle;
 use rat_widget::input::TextInputStyle;
 use rat_widget::masked_input::MaskedInputStyle;
@@ -14,7 +16,7 @@ use rat_widget::statusline::{StatusLine, StatusLineState};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::{Color, Style};
 use ratatui::style::Stylize;
-use ratatui::Frame;
+use ratatui::widgets::StatefulWidget;
 use std::time::SystemTime;
 
 fn main() -> Result<(), anyhow::Error> {
@@ -48,14 +50,11 @@ pub enum MinimalAction {}
 
 #[derive(Debug, Default)]
 pub struct MinimalState {
-    pub g: GeneralState,
     pub mask0: Mask0,
 }
 
 #[derive(Debug)]
-pub struct GeneralState {
-    pub theme: &'static Theme,
-    pub timers: Timers,
+pub struct GlobalState {
     pub status: StatusLineState,
     pub error_dlg: MsgDialogState,
 }
@@ -65,11 +64,9 @@ pub struct Mask0 {
     pub menu: MenuLineState,
 }
 
-impl Default for GeneralState {
+impl Default for GlobalState {
     fn default() -> Self {
         Self {
-            theme: &ONEDARK,
-            timers: Default::default(),
             status: Default::default(),
             error_dlg: Default::default(),
         }
@@ -103,29 +100,29 @@ impl TuiApp for MinimalApp {
     type State = MinimalState;
     type Action = MinimalAction;
     type Error = anyhow::Error;
+    type Theme = Theme;
+    type Global = GlobalState;
 
-    fn get_timers<'b>(&self, uistate: &'b Self::State) -> Option<&'b Timers> {
-        Some(&uistate.g.timers)
+    fn theme(&self) -> &Self::Theme {
+        &ONEDARK
     }
 
     fn init(
         &self,
+        ctx: &mut AppContext<'_, Self>,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
 
     fn repaint(
         &self,
-        frame: &mut Frame<'_>,
+        ctx: &mut RenderContext<'_, MinimalApp>,
         event: RepaintEvent,
         data: &mut Self::Data,
         uistate: &mut Self::State,
     ) -> Result<(), Self::Error> {
-        let area = frame.size();
-
         let layout = {
             let r = Layout::new(
                 Direction::Vertical,
@@ -135,7 +132,7 @@ impl TuiApp for MinimalApp {
                     Constraint::Length(1),
                 ],
             )
-            .split(area);
+            .split(ctx.area);
 
             MinimalAppLayout {
                 area: r[0],
@@ -144,35 +141,35 @@ impl TuiApp for MinimalApp {
             }
         };
 
-        repaint_mask0(&event, frame, layout, data, uistate)?;
+        repaint_mask0(&event, ctx, layout, data, uistate)?;
 
-        if uistate.g.error_dlg.active {
-            let err = MsgDialog::new().styles(uistate.g.theme.status_dialog_style());
-            frame.render_stateful_widget(err, layout.area, &mut uistate.g.error_dlg);
+        if ctx.g.error_dlg.active {
+            let err = MsgDialog::new().styles(ctx.theme.status_dialog_style());
+            err.render(layout.area, ctx.buffer, &mut ctx.g.error_dlg);
         }
 
-        let status = StatusLine::new().styles(uistate.g.theme.statusline_style());
-        frame.render_stateful_widget(status, layout.status, &mut uistate.g.status);
+        let status = StatusLine::new().styles(ctx.theme.statusline_style());
+        status.render(layout.status, ctx.buffer, &mut ctx.g.status);
 
         Ok(())
     }
 
     fn timer(
         &self,
+        ctx: &mut AppContext<'_, MinimalApp>,
         event: TimeOut,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> AppResult {
         Ok(Control::Continue)
     }
 
     fn crossterm(
         &self,
+        ctx: &mut AppContext<'_, MinimalApp>,
         event: Event,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> AppResult {
         use crossterm::event::*;
 
@@ -194,45 +191,46 @@ impl TuiApp for MinimalApp {
         });
 
         flow!({
-            if uistate.g.error_dlg.active {
-                uistate.g.error_dlg.handle(&event, FocusKeys).into()
+            if ctx.g.error_dlg.active {
+                ctx.g.error_dlg.handle(&event, FocusKeys).into()
             } else {
                 Control::Continue
             }
         });
 
-        flow!(handle_mask0(&event, data, uistate)?);
+        flow!(handle_mask0(ctx, &event, data, uistate)?);
 
         Ok(Control::Continue)
     }
 
     fn action(
         &self,
+        ctx: &mut AppContext<'_, MinimalApp>,
         event: Self::Action,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> AppResult {
         // TODO: actions
         Ok(Control::Continue)
     }
 
-    fn task(&self, event: Self::Action, results: &Sender<AppResult>) -> AppResult {
+    fn task(
+        &self,
+        event: Self::Action,
+        results: &Sender<Result<Control<Self::Action>, Self::Error>>,
+    ) -> AppResult {
         // TODO: tasks
         Ok(Control::Continue)
     }
 
     fn error(
         &self,
+        ctx: &mut AppContext<'_, Self>,
         event: Self::Error,
         data: &mut Self::Data,
         uistate: &mut Self::State,
-        send: &Sender<Self::Action>,
     ) -> AppResult {
-        uistate
-            .g
-            .error_dlg
-            .append(format!("{:?}", &*event).as_str());
+        ctx.g.error_dlg.append(format!("{:?}", &*event).as_str());
         Ok(Control::Repaint)
     }
 
@@ -243,22 +241,25 @@ impl TuiApp for MinimalApp {
 
 fn repaint_mask0(
     event: &RepaintEvent,
-    frame: &mut Frame<'_>,
+    ctx: &mut RenderContext<'_, MinimalApp>,
     layout: MinimalAppLayout,
     data: &mut MinimalData,
     uistate: &mut MinimalState,
 ) -> Result<(), anyhow::Error> {
     // TODO: repaint_mask
 
-    let menu = MenuLine::new()
-        .styles(uistate.g.theme.menu_style())
-        .add("_Quit");
-    frame.render_stateful_widget(menu, layout.menu, &mut uistate.mask0.menu);
+    let menu = MenuLine::new().styles(ctx.theme.menu_style()).add("_Quit");
+    menu.render(layout.menu, ctx.buffer, &mut uistate.mask0.menu);
 
     Ok(())
 }
 
-fn handle_mask0(event: &Event, data: &mut MinimalData, uistate: &mut MinimalState) -> AppResult {
+fn handle_mask0(
+    ctx: &mut AppContext<'_, MinimalApp>,
+    event: &Event,
+    data: &mut MinimalData,
+    uistate: &mut MinimalState,
+) -> AppResult {
     let mask0 = &mut uistate.mask0;
 
     // TODO: handle_mask

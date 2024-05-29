@@ -136,6 +136,23 @@ pub struct RenderContext<'a, App: TuiApp + ?Sized> {
     pub non_exhaustive: NonExhaustive,
 }
 
+impl<'a, App: TuiApp + ?Sized> RenderContext<'a, App> {
+    // These are pretty useless, as this runs into a double borrow mut.
+
+    // pub fn render_widget<W: Widget>(&mut self, widget: W, area: Rect) {
+    //     widget.render(area, self.buffer);
+    // }
+    //
+    // pub fn render_stateful_widget<W: StatefulWidget>(
+    //     &mut self,
+    //     widget: W,
+    //     area: Rect,
+    //     state: &mut W::State,
+    // ) {
+    //     widget.render(area, self.buffer, state);
+    // }
+}
+
 /// I like traits. Therefore, one more for some application level widget.
 pub trait AppWidget<App: TuiApp> {
     /// Renders an application widget.
