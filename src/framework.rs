@@ -153,19 +153,6 @@ impl<'a, App: TuiApp + ?Sized> RenderContext<'a, App> {
     // }
 }
 
-/// I like traits. Therefore, one more for some application level widget.
-pub trait AppWidget<App: TuiApp> {
-    /// Renders an application widget.
-    fn render<'a>(
-        &self,
-        ctx: &mut RenderContext<'a, App>,
-        event: RepaintEvent,
-        area: Rect,
-        data: &mut App::Data,
-        uistate: &mut App::State,
-    ) -> Result<(), App::Error>;
-}
-
 enum PollNext {
     Timers,
     Workers,

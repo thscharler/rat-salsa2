@@ -1,11 +1,14 @@
 use rat_event::util::Outcome;
 use rat_event::UsedEvent;
 use rat_widget::menuline::MenuOutcome;
+use ratatui::layout::Rect;
 
 mod framework;
 mod timer;
 
-pub use framework::{run_tui, AppContext, AppWidget, RenderContext, RunConfig, TuiApp};
+pub use framework::{run_tui, AppContext, RenderContext, RunConfig, TuiApp};
+use rat_widget::button::ButtonOutcome;
+use rat_widget::event::TextOutcome;
 pub use timer::{TimeOut, TimerDef, TimerEvent, Timers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -65,6 +68,28 @@ impl<Action> From<MenuOutcome> for Control<Action> {
     }
 }
 
+impl<Action> From<ButtonOutcome> for Control<Action> {
+    fn from(value: ButtonOutcome) -> Self {
+        match value {
+            ButtonOutcome::NotUsed => Control::Continue,
+            ButtonOutcome::Unchanged => Control::Break,
+            ButtonOutcome::Changed => Control::Repaint,
+            ButtonOutcome::Pressed => Control::Repaint,
+        }
+    }
+}
+
+impl<Action> From<TextOutcome> for Control<Action> {
+    fn from(value: TextOutcome) -> Self {
+        match value {
+            TextOutcome::NotUsed => Control::Continue,
+            TextOutcome::Unchanged => Control::Break,
+            TextOutcome::Changed => Control::Repaint,
+            TextOutcome::TextChanged => Control::Repaint,
+        }
+    }
+}
+
 /// Gives some extra information why a repaint was triggered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepaintEvent {
@@ -72,6 +97,19 @@ pub enum RepaintEvent {
     Change,
     /// A timer triggered this.
     Timer(TimeOut),
+}
+
+/// I like traits. Therefore, one more for some application level widget.
+pub trait AppWidget<App: TuiApp> {
+    /// Renders an application widget.
+    fn render<'a>(
+        &self,
+        ctx: &mut RenderContext<'a, App>,
+        event: RepaintEvent,
+        area: Rect,
+        data: &mut App::Data,
+        uistate: &mut App::State,
+    ) -> Result<(), App::Error>;
 }
 
 mod _private {
