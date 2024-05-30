@@ -23,14 +23,37 @@ use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
 use std::{io, mem, thread};
 
+/// A trait for a TUI-App.
+///
+/// The trait is only needed to collect all the involved types.
+/// It can be easily implemented for a unit-struct.
+///
+/// ```rust ignore
+/// struct MyApp;
+///
+/// impl TuiApp for MyApp {
+///     // ...
+/// }
+/// ```
+///
 pub trait TuiApp {
+    /// Application data.
     type Data;
+    /// UI state structs.
     type State;
+    /// Type for actions.
     type Action;
+    /// Error type.
     type Error;
+    /// Type for the theme.
     type Theme;
+    /// Type for some global ui state.
+    /// The example uses this for the statusbar and a message-dialog.
+    /// Separating this from the ui-state helps with borrowing.
     type Global;
 
+    /// Return a reference to the active theme.
+    /// This is added to the AppContext.
     fn theme(&self) -> &Self::Theme;
 
     /// Initialize the application. Runs before the first repaint.

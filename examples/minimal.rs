@@ -6,7 +6,7 @@ use rat_salsa2::{
     flow, run_tui, AppContext, Control, RenderContext, RepaintEvent, RunConfig, TimeOut, TuiApp,
 };
 use rat_widget::button::ButtonStyle;
-use rat_widget::event::{FocusKeys, HandleEvent};
+use rat_widget::event::{ct_event, FocusKeys, HandleEvent};
 use rat_widget::input::TextInputStyle;
 use rat_widget::masked_input::MaskedInputStyle;
 use rat_widget::menuline::{MenuLine, MenuLineState, MenuOutcome, MenuStyle};
@@ -16,7 +16,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::{Color, Style};
 use ratatui::style::Stylize;
 use ratatui::widgets::StatefulWidget;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 fn main() -> Result<(), anyhow::Error> {
     setup_logging()?;
@@ -122,6 +122,8 @@ impl TuiApp for MinimalApp {
         data: &mut Self::Data,
         uistate: &mut Self::State,
     ) -> Result<(), Self::Error> {
+        let t0 = SystemTime::now();
+
         let layout = {
             let r = Layout::new(
                 Direction::Vertical,
@@ -147,7 +149,17 @@ impl TuiApp for MinimalApp {
             err.render(layout.area, ctx.buffer, &mut ctx.g.error_dlg);
         }
 
-        let status = StatusLine::new().styles(ctx.theme.statusline_style());
+        let el = t0.elapsed().unwrap_or(Duration::from_nanos(0));
+        ctx.g.status.status(1, format!("R {:.3?}", el).to_string());
+
+        let status = StatusLine::new()
+            .layout([
+                Constraint::Fill(1),
+                Constraint::Length(12),
+                Constraint::Length(12),
+                Constraint::Length(12),
+            ])
+            .styles(ctx.theme.statusline_style());
         status.render(layout.status, ctx.buffer, &mut ctx.g.status);
 
         Ok(())
@@ -170,22 +182,13 @@ impl TuiApp for MinimalApp {
         data: &mut Self::Data,
         uistate: &mut Self::State,
     ) -> AppResult {
+        let t0 = SystemTime::now();
+
         use crossterm::event::*;
 
         flow!(match &event {
-            Event::Resize(_, _) => {
-                //
-                Control::Break
-            }
-            Event::Key(KeyEvent {
-                kind: KeyEventKind::Press,
-                code: KeyCode::Char('q'),
-                modifiers: KeyModifiers::CONTROL,
-                ..
-            }) => {
-                //
-                Control::Break
-            }
+            Event::Resize(_, _) => Control::Repaint,
+            ct_event!(key press CONTROL-'q') => Control::Quit,
             _ => Control::Continue,
         });
 
@@ -199,6 +202,9 @@ impl TuiApp for MinimalApp {
 
         flow!(handle_mask0(ctx, &event, data, uistate)?);
 
+        let el = t0.elapsed().unwrap_or(Duration::from_nanos(0));
+        ctx.g.status.status(2, format!("H {:.3?}", el).to_string());
+
         Ok(Control::Continue)
     }
 
@@ -209,7 +215,13 @@ impl TuiApp for MinimalApp {
         data: &mut Self::Data,
         uistate: &mut Self::State,
     ) -> AppResult {
+        let t0 = SystemTime::now();
+
         // TODO: actions
+
+        let el = t0.elapsed().unwrap_or(Duration::from_nanos(0));
+        ctx.g.status.status(3, format!("A {:.3?}", el).to_string());
+
         Ok(Control::Continue)
     }
 
@@ -362,7 +374,12 @@ impl Theme {
     }
 
     pub fn statusline_style(&self) -> Vec<Style> {
-        vec![self.status_style()]
+        vec![
+            self.status_style(),
+            Style::default().white().on_blue(),
+            Style::default().white().on_light_blue(),
+            Style::default().white().on_gray(),
+        ]
     }
 
     pub fn status_dialog_style(&self) -> MsgDialogStyle {
