@@ -2,9 +2,8 @@
 
 use crossbeam::channel::Sender;
 use crossterm::event::Event;
-use rat_salsa2::{
-    flow, run_tui, AppContext, Control, RenderContext, RepaintEvent, RunConfig, TimeOut, TuiApp,
-};
+use rat_salsa2::event::RepaintEvent;
+use rat_salsa2::{flow, run_tui, AppContext, Control, RenderContext, RunConfig, TimeOut, TuiApp};
 use rat_widget::button::ButtonStyle;
 use rat_widget::event::{ct_event, FocusKeys, HandleEvent};
 use rat_widget::input::TextInputStyle;

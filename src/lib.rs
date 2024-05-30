@@ -1,12 +1,14 @@
+use crate::event::RepaintEvent;
+use rat_widget::button::ButtonOutcome;
+use rat_widget::event::{ConsumedEvent, Outcome, TextOutcome};
 use rat_widget::menuline::MenuOutcome;
 use ratatui::layout::Rect;
+use std::mem;
 
 mod framework;
 mod timer;
 
 pub use framework::{run_tui, AppContext, RenderContext, RunConfig, TuiApp};
-use rat_widget::button::ButtonOutcome;
-use rat_widget::event::{ConsumedEvent, Outcome, TextOutcome};
 pub use timer::{TimeOut, TimerDef, TimerEvent, Timers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -26,7 +28,7 @@ pub enum Control<Action> {
 
 impl<Action> ConsumedEvent for Control<Action> {
     fn is_consumed(&self) -> bool {
-        true
+        mem::discriminant(self) != mem::discriminant(&Control::Continue)
     }
 }
 
@@ -88,15 +90,6 @@ impl<Action> From<TextOutcome> for Control<Action> {
     }
 }
 
-/// Gives some extra information why a repaint was triggered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RepaintEvent {
-    /// There was a [Repaint](crate::Control::Repaint) or the change flag has been set.
-    Repaint,
-    /// A timer triggered this.
-    Timer(TimeOut),
-}
-
 /// I like traits. Therefore, one more for some application level widget.
 pub trait AppWidget<App: TuiApp> {
     /// Renders an application widget.
@@ -108,6 +101,26 @@ pub trait AppWidget<App: TuiApp> {
         data: &mut App::Data,
         uistate: &mut App::State,
     ) -> Result<(), App::Error>;
+}
+
+pub mod event {
+    //!
+    //! Event-handler traits and Keybindings.
+    //!
+
+    use crate::TimeOut;
+    pub use rat_widget::event::{
+        crossterm, ct_event, util, ConsumedEvent, FocusKeys, HandleEvent, MouseOnly, Outcome,
+    };
+
+    /// Gives some extra information why a repaint was triggered.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum RepaintEvent {
+        /// There was a [Repaint](crate::Control::Repaint) or the change flag has been set.
+        Repaint,
+        /// A timer triggered this.
+        Timer(TimeOut),
+    }
 }
 
 mod _private {
