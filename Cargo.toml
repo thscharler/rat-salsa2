@@ -1,6 +1,6 @@
 [package]
 name = "rat-salsa2"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2021"
 authors = ["thscharler <thscharler@gmail.com>"]
 description = "ratatui widgets and a crossterm event-loop"
@@ -50,8 +50,9 @@ crossbeam = "0.8"
 crossterm = "0.27"
 log = "0.4"
 ratatui = { version = "0.26", features = ["unstable-rendered-line-info"] }
-rat-event = "0.12"
-rat-widget = "0.9"
+
+rat-widget = { version = "0.10" }
+#rat-widget = { version = "0.10", path = "../rat-widget" }
 
 [dev-dependencies]
 fern = "0.6"
