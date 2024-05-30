@@ -1,5 +1,3 @@
-use rat_event::util::Outcome;
-use rat_event::UsedEvent;
 use rat_widget::menuline::MenuOutcome;
 use ratatui::layout::Rect;
 
@@ -8,7 +6,7 @@ mod timer;
 
 pub use framework::{run_tui, AppContext, RenderContext, RunConfig, TuiApp};
 use rat_widget::button::ButtonOutcome;
-use rat_widget::event::TextOutcome;
+use rat_widget::event::{ConsumedEvent, Outcome, TextOutcome};
 pub use timer::{TimeOut, TimerDef, TimerEvent, Timers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -26,8 +24,8 @@ pub enum Control<Action> {
     Quit,
 }
 
-impl<Action> UsedEvent for Control<Action> {
-    fn used_event(&self) -> bool {
+impl<Action> ConsumedEvent for Control<Action> {
+    fn is_consumed(&self) -> bool {
         true
     }
 }
@@ -93,8 +91,8 @@ impl<Action> From<TextOutcome> for Control<Action> {
 /// Gives some extra information why a repaint was triggered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepaintEvent {
-    /// There was a [ControlUI::Change](crate::ControlUI::Change) or the change flag has been set.
-    Change,
+    /// There was a [Repaint](crate::Control::Repaint) or the change flag has been set.
+    Repaint,
     /// A timer triggered this.
     Timer(TimeOut),
 }
@@ -102,9 +100,9 @@ pub enum RepaintEvent {
 /// I like traits. Therefore, one more for some application level widget.
 pub trait AppWidget<App: TuiApp> {
     /// Renders an application widget.
-    fn render<'a>(
+    fn render(
         &self,
-        ctx: &mut RenderContext<'a, App>,
+        ctx: &mut RenderContext<'_, App>,
         event: RepaintEvent,
         area: Rect,
         data: &mut App::Data,

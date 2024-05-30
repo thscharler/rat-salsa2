@@ -2,12 +2,11 @@
 
 use crossbeam::channel::Sender;
 use crossterm::event::Event;
-use rat_event::FocusKeys;
-use rat_event::HandleEvent;
 use rat_salsa2::{
     flow, run_tui, AppContext, Control, RenderContext, RepaintEvent, RunConfig, TimeOut, TuiApp,
 };
 use rat_widget::button::ButtonStyle;
+use rat_widget::event::{FocusKeys, HandleEvent};
 use rat_widget::input::TextInputStyle;
 use rat_widget::masked_input::MaskedInputStyle;
 use rat_widget::menuline::{MenuLine, MenuLineState, MenuOutcome, MenuStyle};

@@ -136,23 +136,6 @@ pub struct RenderContext<'a, App: TuiApp + ?Sized> {
     pub non_exhaustive: NonExhaustive,
 }
 
-impl<'a, App: TuiApp + ?Sized> RenderContext<'a, App> {
-    // These are pretty useless, as this runs into a double borrow mut.
-
-    // pub fn render_widget<W: Widget>(&mut self, widget: W, area: Rect) {
-    //     widget.render(area, self.buffer);
-    // }
-    //
-    // pub fn render_stateful_widget<W: StatefulWidget>(
-    //     &mut self,
-    //     widget: W,
-    //     area: Rect,
-    //     state: &mut W::State,
-    // ) {
-    //     widget.render(area, self.buffer, state);
-    // }
-}
-
 enum PollNext {
     Timers,
     Workers,
@@ -174,7 +157,7 @@ impl Default for RunConfig {
 }
 
 /// Run the event-loop
-pub fn run_tui<App: TuiApp>(
+pub fn run_tui<App>(
     app: &'static App,
     data: &mut App::Data,
     uistate: &mut App::State,
@@ -184,7 +167,7 @@ where
     App::Action: Send + 'static,
     App::Error: Send + 'static + From<TryRecvError> + From<io::Error> + From<SendError<()>>,
     App::Global: Default,
-    App: Sync,
+    App: TuiApp + Sync,
 {
     stdout().execute(EnterAlternateScreen)?;
     stdout().execute(EnableMouseCapture)?;
@@ -220,7 +203,7 @@ where
 }
 
 /// Run the event-loop.
-fn _run_tui<App: TuiApp>(
+fn _run_tui<App>(
     app: &'static App,
     data: &mut App::Data,
     uistate: &mut App::State,
@@ -230,7 +213,7 @@ where
     App::Action: Send + 'static,
     App::Error: Send + 'static + From<TryRecvError> + From<io::Error> + From<SendError<()>>,
     App::Global: Default,
-    App: Sync,
+    App: TuiApp + Sync,
 {
     let mut term = Terminal::new(CrosstermBackend::new(stdout()))?;
     term.clear()?;
@@ -253,19 +236,14 @@ where
     let mut poll_sleep = Duration::from_millis(10);
 
     // init
-    match app.init(&mut appctx, data, uistate) {
-        Err(err) => {
-            return Err(err);
-        }
-        _ => {}
-    };
+    app.init(&mut appctx, data, uistate)?;
 
     // initial repaint.
     _ = repaint_tui(
         app,
         &mut appctx,
         &mut term,
-        RepaintEvent::Change,
+        RepaintEvent::Repaint,
         data,
         uistate,
     )?;
@@ -331,7 +309,7 @@ where
                 app,
                 &mut appctx,
                 &mut term,
-                RepaintEvent::Change,
+                RepaintEvent::Repaint,
                 data,
                 uistate,
             ),
@@ -414,32 +392,35 @@ where
     }
 }
 
-fn poll_workers<App: TuiApp>(_app: &App, worker: &ThreadPool<App>) -> bool
+fn poll_workers<App>(_app: &App, worker: &ThreadPool<App>) -> bool
 where
     App::Action: Send + 'static,
     App::Error: Send + 'static + From<TryRecvError>,
-    App: Sync,
+    App: TuiApp + Sync,
 {
     !worker.is_empty()
 }
 
-fn read_workers<App: TuiApp>(
+fn read_workers<App>(
     _app: &App,
     worker: &ThreadPool<App>,
 ) -> Result<Control<App::Action>, App::Error>
 where
     App::Action: Send + 'static,
     App::Error: Send + 'static + From<TryRecvError>,
-    App: Sync,
+    App: TuiApp + Sync,
 {
     worker.try_recv()
 }
 
-fn poll_crossterm<App: TuiApp>(_app: &App) -> Result<bool, io::Error> {
+fn poll_crossterm<App>(_app: &App) -> Result<bool, io::Error>
+where
+    App: TuiApp,
+{
     crossterm::event::poll(Duration::from_millis(0))
 }
 
-fn read_crossterm<App: TuiApp>(
+fn read_crossterm<App>(
     app: &App,
     ctx: &mut AppContext<'_, App>,
     data: &mut App::Data,
@@ -447,6 +428,7 @@ fn read_crossterm<App: TuiApp>(
 ) -> Result<Control<App::Action>, App::Error>
 where
     App::Error: From<io::Error>,
+    App: TuiApp,
 {
     match crossterm::event::read() {
         Ok(evt) => app.crossterm(ctx, evt, data, uistate),
@@ -454,11 +436,10 @@ where
     }
 }
 
-fn calculate_sleep<App: TuiApp>(
-    _app: &App,
-    ctx: &mut AppContext<'_, App>,
-    max: Duration,
-) -> Duration {
+fn calculate_sleep<App>(_app: &App, ctx: &mut AppContext<'_, App>, max: Duration) -> Duration
+where
+    App: TuiApp,
+{
     if let Some(sleep) = ctx.timers.sleep_time() {
         min(sleep, max)
     } else {
@@ -474,9 +455,9 @@ struct ThreadPool<App: TuiApp> {
     handles: Vec<JoinHandle<()>>,
 }
 
-impl<App: TuiApp> ThreadPool<App>
+impl<App> ThreadPool<App>
 where
-    App: Sync,
+    App: TuiApp + Sync,
     App::Action: 'static + Send,
     App::Error: 'static + Send,
 {
@@ -557,13 +538,19 @@ where
     }
 }
 
-impl<App: TuiApp> Drop for ThreadPool<App> {
+impl<App> Drop for ThreadPool<App>
+where
+    App: TuiApp,
+{
     fn drop(&mut self) {
         shutdown_thread_pool(self);
     }
 }
 
-fn shutdown_thread_pool<App: TuiApp>(t: &mut ThreadPool<App>) {
+fn shutdown_thread_pool<App>(t: &mut ThreadPool<App>)
+where
+    App: TuiApp,
+{
     drop(mem::replace(&mut t.send, bounded(0).0));
     for h in t.handles.drain(..) {
         _ = h.join();
