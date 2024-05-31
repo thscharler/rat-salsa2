@@ -2,13 +2,12 @@ use crate::event::RepaintEvent;
 use rat_widget::button::ButtonOutcome;
 use rat_widget::event::{ConsumedEvent, Outcome, TextOutcome};
 use rat_widget::menuline::MenuOutcome;
-use ratatui::layout::Rect;
 use std::mem;
 
 mod framework;
 mod timer;
 
-pub use framework::{run_tui, AppContext, RenderContext, RunConfig, TuiApp};
+pub use framework::{run_tui, AppContext, AppWidget, RenderContext, RunConfig, TuiApp};
 pub use timer::{TimeOut, TimerDef, TimerEvent, Timers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -88,19 +87,6 @@ impl<Action> From<TextOutcome> for Control<Action> {
             TextOutcome::TextChanged => Control::Repaint,
         }
     }
-}
-
-/// I like traits. Therefore, one more for some application level widget.
-pub trait AppWidget<App: TuiApp> {
-    /// Renders an application widget.
-    fn render(
-        &self,
-        ctx: &mut RenderContext<'_, App>,
-        event: RepaintEvent,
-        area: Rect,
-        data: &mut App::Data,
-        uistate: &mut App::State,
-    ) -> Result<(), App::Error>;
 }
 
 pub mod event {

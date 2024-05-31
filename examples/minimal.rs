@@ -114,7 +114,7 @@ impl TuiApp for MinimalApp {
         Ok(())
     }
 
-    fn repaint(
+    fn render(
         &self,
         ctx: &mut RenderContext<'_, MinimalApp>,
         event: RepaintEvent,

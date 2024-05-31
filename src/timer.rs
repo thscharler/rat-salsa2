@@ -150,13 +150,13 @@ pub enum TimerEvent {
 #[derive(Debug, Default)]
 pub struct TimerDef {
     /// Triggers a RepaintEvent.
-    pub repaint: bool,
+    repaint: bool,
     /// Optional repeat.
-    pub repeat: Option<usize>,
+    repeat: Option<usize>,
     /// Duration
-    pub timer: Duration,
+    timer: Duration,
     /// Specific time.
-    pub next: Option<Instant>,
+    next: Option<Instant>,
 }
 
 impl TimerDef {
