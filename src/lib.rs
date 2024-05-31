@@ -7,7 +7,7 @@ use std::mem;
 mod framework;
 mod timer;
 
-pub use framework::{run_tui, AppContext, AppWidget, RenderContext, RunConfig, TuiApp};
+pub use framework::{run_tui, AppContext, AppEvents, AppWidget, RenderContext, RunConfig, TuiApp};
 pub use timer::{TimeOut, TimerDef, TimerEvent, Timers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

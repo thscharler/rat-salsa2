@@ -1,3 +1,19 @@
+# 0.19.1
+
+* Split AppWidgets into AppWidgets and AppEvents. One for the
+  widget side for render, the other for the state side for all
+  event handling. This better aligns with the split seen
+  in ratatui stateful widgets.
+    - The old mono design goes too much in the direction of a widget tree,
+      which is not the intent.
+    - It seems that AppWidget now very much mimics the StatefulWidget trait,
+      event if that was not the initial goal. Curious.
+    - I think I'm quite content with the tree-way split that now exists.
+    - I had originally intended to use the rat-event::HandleEvent trait
+      instead of some AppEvents, but that proved to limited. It still is
+      very fine for creating widgets, that's why I don't want to change
+      it anymore. Can live well with this current state.
+
 # 0.19.0
 
 First release that I consider as BETA ready.

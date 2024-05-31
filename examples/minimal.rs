@@ -1,29 +1,32 @@
 #![allow(unused_variables)]
 
-use crate::mask0::Mask0State;
+use crate::mask0::{Mask0, Mask0State};
 use crossterm::event::Event;
+use log::debug;
 use rat_salsa2::event::RepaintEvent;
 use rat_salsa2::{
-    flow, run_tui, AppContext, AppWidget, Control, RenderContext, RunConfig, TimeOut, TuiApp,
+    flow, run_tui, AppContext, AppEvents, AppWidget, Control, RenderContext, RunConfig, TimeOut,
+    TuiApp,
 };
 use rat_widget::event::{ct_event, FocusKeys, HandleEvent};
 use rat_widget::msgdialog::{MsgDialog, MsgDialogState};
 use rat_widget::statusline::{StatusLine, StatusLineState};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Stylize;
 use ratatui::widgets::StatefulWidget;
 use std::cell::RefCell;
+use std::fs;
 use std::time::{Duration, SystemTime};
 
 fn main() -> Result<(), anyhow::Error> {
     setup_logging()?;
 
+    let app = MinimalApp { mask0: Mask0 };
     let mut global = GlobalState::default();
     let mut data = MinimalData::default();
     let mut state = MinimalState::default();
 
     run_tui(
-        &MinimalApp,
+        app,
         &mut global,
         &theme::ONEDARK,
         &mut data,
@@ -65,22 +68,16 @@ pub enum MinimalAction {}
 // -----------------------------------------------------------------------
 
 #[derive(Debug)]
-pub struct MinimalApp;
+pub struct MinimalApp {
+    pub mask0: Mask0,
+}
 
 impl TuiApp for MinimalApp {
-    type State = MinimalState;
+    type Global = GlobalState;
     type Data = MinimalData;
     type Action = MinimalAction;
     type Error = anyhow::Error;
     type Theme = theme::Theme;
-    type Global = GlobalState;
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct MinimalAppLayout {
-    area: Rect,
-    menu: Rect,
-    status: Rect,
 }
 
 #[derive(Debug, Default)]
@@ -88,14 +85,8 @@ pub struct MinimalState {
     pub mask0: Mask0State,
 }
 
-impl AppWidget<MinimalApp> for MinimalState {
-    fn init(
-        &mut self,
-        ctx: &mut AppContext<'_, MinimalApp>,
-        data: &mut <MinimalApp as TuiApp>::Data,
-    ) -> Result<(), <MinimalApp as TuiApp>::Error> {
-        Ok(())
-    }
+impl AppWidget<MinimalApp> for MinimalApp {
+    type State = MinimalState;
 
     fn render(
         &mut self,
@@ -103,6 +94,7 @@ impl AppWidget<MinimalApp> for MinimalState {
         event: &RepaintEvent,
         area: Rect,
         data: &mut <MinimalApp as TuiApp>::Data,
+        state: &mut Self::State,
     ) -> Result<(), <MinimalApp as TuiApp>::Error> {
         let t0 = SystemTime::now();
 
@@ -110,9 +102,10 @@ impl AppWidget<MinimalApp> for MinimalState {
             Direction::Vertical,
             [Constraint::Fill(1), Constraint::Length(1)],
         )
-        .split(ctx.area);
+        .split(area);
 
-        self.mask0.render(ctx, event, r[0], data)?;
+        self.mask0
+            .render(ctx, event, r[0], data, &mut state.mask0)?;
 
         if ctx.g.error_dlg.borrow().active {
             let err = MsgDialog::new().styles(ctx.theme.status_dialog_style());
@@ -135,6 +128,16 @@ impl AppWidget<MinimalApp> for MinimalState {
             .styles(ctx.theme.statusline_style());
         status.render(r[1], ctx.buffer, &mut ctx.g.status.borrow_mut());
 
+        Ok(())
+    }
+}
+
+impl AppEvents<MinimalApp> for MinimalState {
+    fn init(
+        &mut self,
+        ctx: &mut AppContext<'_, MinimalApp>,
+        data: &mut <MinimalApp as TuiApp>::Data,
+    ) -> Result<(), <MinimalApp as TuiApp>::Error> {
         Ok(())
     }
 
@@ -222,11 +225,16 @@ impl AppWidget<MinimalApp> for MinimalState {
 mod mask0 {
     use crate::MinimalApp;
     use crossterm::event::Event;
+    #[allow(unused_imports)]
+    use log::debug;
     use rat_salsa2::event::{FocusKeys, HandleEvent, RepaintEvent};
-    use rat_salsa2::{flow, AppContext, AppWidget, Control, RenderContext, TuiApp};
+    use rat_salsa2::{flow, AppContext, AppEvents, AppWidget, Control, RenderContext, TuiApp};
     use rat_widget::menuline::{MenuLine, MenuLineState, MenuOutcome};
     use ratatui::layout::{Constraint, Direction, Layout, Rect};
     use ratatui::widgets::StatefulWidget;
+
+    #[derive(Debug)]
+    pub struct Mask0;
 
     #[derive(Debug)]
     pub struct Mask0State {
@@ -243,13 +251,16 @@ mod mask0 {
         }
     }
 
-    impl AppWidget<MinimalApp> for Mask0State {
+    impl AppWidget<MinimalApp> for Mask0 {
+        type State = Mask0State;
+
         fn render(
             &mut self,
             ctx: &mut RenderContext<'_, MinimalApp>,
             event: &RepaintEvent,
             area: Rect,
             data: &mut <MinimalApp as TuiApp>::Data,
+            state: &mut Self::State,
         ) -> Result<(), <MinimalApp as TuiApp>::Error> {
             // TODO: repaint_mask
 
@@ -257,14 +268,21 @@ mod mask0 {
                 Direction::Vertical,
                 [Constraint::Fill(1), Constraint::Length(1)],
             )
-            .split(ctx.area);
+            .split(area);
 
-            let menu = MenuLine::new().styles(ctx.theme.menu_style()).add("_Quit");
-            menu.render(r[1], ctx.buffer, &mut self.menu);
+            let menu = MenuLine::new()
+                .styles(ctx.theme.menu_style())
+                .add("One")
+                .add("Two")
+                .add("Three")
+                .add("_Quit");
+            menu.render(r[1], ctx.buffer, &mut state.menu);
 
             Ok(())
         }
+    }
 
+    impl AppEvents<MinimalApp> for Mask0State {
         fn crossterm(
             &mut self,
             ctx: &mut AppContext<'_, MinimalApp>,
@@ -274,10 +292,13 @@ mod mask0 {
         {
             // TODO: handle_mask
             flow!(match self.menu.handle(event, FocusKeys) {
-                MenuOutcome::Activated(0) => {
+                MenuOutcome::Activated(3) => {
                     Control::Quit
                 }
-                v => v.into(),
+                v => {
+                    let w = v.into();
+                    w
+                }
             });
 
             Ok(Control::Continue)
@@ -410,7 +431,7 @@ mod theme {
         }
     }
 
-    pub static ONEDARK: Theme = Theme {
+    pub(crate) static ONEDARK: Theme = Theme {
         name: "onedark",
         dark_theme: false,
 
@@ -465,6 +486,7 @@ mod theme {
 }
 
 fn setup_logging() -> Result<(), anyhow::Error> {
+    fs::remove_file("log.log")?;
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
