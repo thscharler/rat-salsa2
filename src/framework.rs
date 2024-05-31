@@ -61,10 +61,16 @@ type Task<Action, Error> = Box<
     dyn FnOnce(&Sender<Result<Control<Action>, Error>>) -> Result<Control<Action>, Error> + Send,
 >;
 
+///
 /// A trait for application level widgets.
-/// Implement on a uistate struct.
+///
+/// This trait is an anlog to ratatui's StatefulWidget, and
+/// does only the rendering part. It's extended with all the
+/// extras needed in an application.
+///
 #[allow(unused_variables)]
 pub trait AppWidget<App: TuiApp + Sync + ?Sized> {
+    /// Type of the State.
     type State: AppEvents<App> + Debug;
 
     /// Renders an application widget.
@@ -75,11 +81,15 @@ pub trait AppWidget<App: TuiApp + Sync + ?Sized> {
         area: Rect,
         data: &mut App::Data,
         state: &mut Self::State,
-    ) -> Result<(), App::Error> {
-        Ok(())
-    }
+    ) -> Result<(), App::Error>;
 }
 
+///
+/// Eventhandling for application level widgets.
+///
+/// This one collects all currently defined events.
+/// Implement this one on the state struct.
+///
 #[allow(unused_variables)]
 pub trait AppEvents<App: TuiApp + Sync + ?Sized> {
     /// Initialize the application. Runs before the first repaint.

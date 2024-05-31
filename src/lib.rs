@@ -10,16 +10,31 @@ mod timer;
 pub use framework::{run_tui, AppContext, AppEvents, AppWidget, RenderContext, RunConfig, TuiApp};
 pub use timer::{TimeOut, TimerDef, TimerEvent, Timers};
 
+/// Result type for most event-handling functions.
+///
+/// This controls the main event loop and the running of the
+/// event-handling functions.
+///
+/// For the event-handling functions there is the [flow!] macro,
+/// that is used to encapsulate calls to further event-handling
+/// functions. It returns early if the result is anything but Continue.
+///
+/// In the event-loop Repaint and Action call out to the corresponding
+/// event-handler functions. Continue and Break both wait for
+/// new incoming events. Quit quits the application.
+///
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[must_use]
 pub enum Control<Action> {
-    /// Continue operations.
+    /// Continue handling the current event.
+    /// In the event-loop this goes on waiting for a new event.
     Continue,
     /// Break handling the current event.
+    /// In the event-loop this does nothing and just waits for a new event.
     Break,
-    /// Trigger a repaint.
+    /// Triggers a repaint in the event-loop.
     Repaint,
-    /// Trigger an action.
+    /// The event-loop calls out the action-handlers to take care of it.
     Action(Action),
     /// Quit the application.
     Quit,
@@ -27,7 +42,7 @@ pub enum Control<Action> {
 
 impl<Action> ConsumedEvent for Control<Action> {
     fn is_consumed(&self) -> bool {
-        mem::discriminant(self) != mem::discriminant(&Control::Continue)
+        !matches!(self, Control::Continue)
     }
 }
 
