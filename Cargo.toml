@@ -11,7 +11,6 @@ keywords = ["ratatui", "input", "event-loop"]
 categories = ["command-line-interface"]
 exclude = [".idea/*", ".gitignore"]
 
-
 [lints.rust]
 absolute_paths_not_starting_with_crate = "warn"
 # box_pointers = "warn"
