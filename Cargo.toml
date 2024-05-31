@@ -1,6 +1,6 @@
 [package]
 name = "rat-salsa2"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2021"
 authors = ["thscharler <thscharler@gmail.com>"]
 description = "ratatui widgets and a crossterm event-loop"

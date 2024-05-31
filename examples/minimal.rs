@@ -2,6 +2,7 @@
 
 use crate::mask0::{Mask0, Mask0State};
 use crossterm::event::Event;
+#[allow(unused_imports)]
 use log::debug;
 use rat_salsa2::event::RepaintEvent;
 use rat_salsa2::{
@@ -63,7 +64,9 @@ impl Default for GlobalState {
 pub struct MinimalData {}
 
 #[derive(Debug)]
-pub enum MinimalAction {}
+pub enum MinimalAction {
+    Message(String),
+}
 
 // -----------------------------------------------------------------------
 
@@ -198,6 +201,12 @@ impl AppEvents<MinimalApp> for MinimalState {
         let t0 = SystemTime::now();
 
         // TODO: actions
+        flow!(match event {
+            MinimalAction::Message(s) => {
+                ctx.g.status.borrow_mut().status(0, s);
+                Control::Repaint
+            }
+        });
 
         let el = t0.elapsed().unwrap_or(Duration::from_nanos(0));
         ctx.g
@@ -223,7 +232,7 @@ impl AppEvents<MinimalApp> for MinimalState {
 }
 
 mod mask0 {
-    use crate::MinimalApp;
+    use crate::{MinimalAction, MinimalApp};
     use crossterm::event::Event;
     #[allow(unused_imports)]
     use log::debug;
@@ -292,6 +301,22 @@ mod mask0 {
         {
             // TODO: handle_mask
             flow!(match self.menu.handle(event, FocusKeys) {
+                MenuOutcome::Activated(0) => {
+                    _ = ctx.tasks.send(Box::new(|v| {
+                        Ok(Control::Action(MinimalAction::Message(
+                            "hello from the other side".into(),
+                        )))
+                    }));
+                    Control::Break
+                }
+                MenuOutcome::Activated(1) => {
+                    _ = ctx.tasks.send(Box::new(|v| {
+                        Ok(Control::Action(MinimalAction::Message(
+                            "another background task finished ...".into(),
+                        )))
+                    }));
+                    Control::Break
+                }
                 MenuOutcome::Activated(3) => {
                     Control::Quit
                 }
