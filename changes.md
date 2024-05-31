@@ -1,4 +1,4 @@
-# 0.19.1
+# 0.20.0
 
 * Split AppWidgets into AppWidgets and AppEvents. One for the
   widget side for render, the other for the state side for all
