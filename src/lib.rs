@@ -2,7 +2,6 @@ use crate::event::RepaintEvent;
 use rat_widget::button::ButtonOutcome;
 use rat_widget::event::{ConsumedEvent, Outcome, TextOutcome};
 use rat_widget::menuline::MenuOutcome;
-use std::mem;
 
 mod framework;
 mod timer;

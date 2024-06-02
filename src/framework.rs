@@ -79,9 +79,9 @@ pub trait AppWidget<App: TuiApp + Sync + ?Sized> {
         ctx: &mut RenderContext<'_, App>,
         event: &RepaintEvent,
         area: Rect,
-        data: &mut App::Data,
+        data: &mut <App as TuiApp>::Data,
         state: &mut Self::State,
-    ) -> Result<(), App::Error>;
+    ) -> Result<(), <App as TuiApp>::Error>;
 }
 
 ///
@@ -96,8 +96,8 @@ pub trait AppEvents<App: TuiApp + Sync + ?Sized> {
     fn init(
         &mut self,
         ctx: &mut AppContext<'_, App>,
-        data: &mut App::Data,
-    ) -> Result<(), App::Error> {
+        data: &mut <App as TuiApp>::Data,
+    ) -> Result<(), <App as TuiApp>::Error> {
         Ok(())
     }
 
@@ -106,8 +106,8 @@ pub trait AppEvents<App: TuiApp + Sync + ?Sized> {
         &mut self,
         ctx: &mut AppContext<'_, App>,
         event: &TimeOut,
-        data: &mut App::Data,
-    ) -> Result<Control<App::Action>, App::Error> {
+        data: &mut <App as TuiApp>::Data,
+    ) -> Result<Control<<App as TuiApp>::Action>, <App as TuiApp>::Error> {
         Ok(Control::Continue)
     }
 
@@ -116,8 +116,8 @@ pub trait AppEvents<App: TuiApp + Sync + ?Sized> {
         &mut self,
         ctx: &mut AppContext<'_, App>,
         event: &crossterm::event::Event,
-        data: &mut App::Data,
-    ) -> Result<Control<App::Action>, App::Error> {
+        data: &mut <App as TuiApp>::Data,
+    ) -> Result<Control<<App as TuiApp>::Action>, <App as TuiApp>::Error> {
         Ok(Control::Continue)
     }
 
@@ -125,9 +125,9 @@ pub trait AppEvents<App: TuiApp + Sync + ?Sized> {
     fn action(
         &mut self,
         ctx: &mut AppContext<'_, App>,
-        event: App::Action,
-        data: &mut App::Data,
-    ) -> Result<Control<App::Action>, App::Error> {
+        event: <App as TuiApp>::Action,
+        data: &mut <App as TuiApp>::Data,
+    ) -> Result<Control<<App as TuiApp>::Action>, <App as TuiApp>::Error> {
         Ok(Control::Continue)
     }
 
@@ -135,9 +135,9 @@ pub trait AppEvents<App: TuiApp + Sync + ?Sized> {
     fn error(
         &self,
         ctx: &mut AppContext<'_, App>,
-        event: App::Error,
-        data: &mut App::Data,
-    ) -> Result<Control<App::Action>, App::Error> {
+        event: <App as TuiApp>::Error,
+        data: &mut <App as TuiApp>::Data,
+    ) -> Result<Control<<App as TuiApp>::Action>, <App as TuiApp>::Error> {
         Ok(Control::Continue)
     }
 }
