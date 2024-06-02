@@ -125,7 +125,7 @@ pub trait AppEvents<App: TuiApp + Sync + ?Sized> {
     fn action(
         &mut self,
         ctx: &mut AppContext<'_, App>,
-        event: <App as TuiApp>::Action,
+        event: &mut <App as TuiApp>::Action,
         data: &mut <App as TuiApp>::Data,
     ) -> Result<Control<<App as TuiApp>::Action>, <App as TuiApp>::Error> {
         Ok(Control::Continue)
@@ -375,7 +375,7 @@ where
                 data,
                 state,
             ),
-            Ok(Control::Action(action)) => state.action(&mut appctx, action, data),
+            Ok(Control::Action(mut action)) => state.action(&mut appctx, &mut action, data),
             Ok(Control::Quit) => break 'ui true,
             Err(e) => state.error(&mut appctx, e, data),
         }
