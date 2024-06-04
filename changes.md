@@ -1,3 +1,15 @@
+# 0.20.1
+
+* Extend tasks with cancellation support.
+* Add queue for extra result values from event-handling.
+  Used for accurate repaint after focus changes.
+
+* fix missing conversion from ScrollOutcome.
+* fix missing conversions for DoubleClickOutcome.
+
+* simplified the internal machinery of event-handling a bit.
+  Simpler type variables are a thing.
+
 # 0.15.1
 
 was the wrong crate committed
