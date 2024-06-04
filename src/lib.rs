@@ -1,6 +1,8 @@
 use crate::event::RepaintEvent;
 use rat_widget::button::ButtonOutcome;
-use rat_widget::event::{ConsumedEvent, Outcome, ScrollOutcome, TextOutcome};
+use rat_widget::event::{
+    ConsumedEvent, DoubleClickOutcome, EditOutcome, Outcome, ScrollOutcome, TextOutcome,
+};
 use rat_widget::menuline::MenuOutcome;
 
 mod framework;
@@ -110,6 +112,30 @@ impl<Action, R: Into<Control<Action>>> From<ScrollOutcome<R>> for Control<Action
             ScrollOutcome::Unchanged => Control::Break,
             ScrollOutcome::Changed => Control::Repaint,
             ScrollOutcome::Inner(v) => v.into(),
+        }
+    }
+}
+
+impl<Action> From<DoubleClickOutcome> for Control<Action> {
+    fn from(value: DoubleClickOutcome) -> Self {
+        match value {
+            DoubleClickOutcome::NotUsed => Control::Continue,
+            DoubleClickOutcome::Unchanged => Control::Break,
+            DoubleClickOutcome::Changed => Control::Repaint,
+            DoubleClickOutcome::ClickClick(_, _) => Control::Break,
+        }
+    }
+}
+
+impl<Action> From<EditOutcome> for Control<Action> {
+    fn from(value: EditOutcome) -> Self {
+        match value {
+            EditOutcome::NotUsed => Control::Continue,
+            EditOutcome::Unchanged => Control::Break,
+            EditOutcome::Changed => Control::Repaint,
+            EditOutcome::Insert => Control::Break,
+            EditOutcome::Remove => Control::Break,
+            EditOutcome::Edit => Control::Break,
         }
     }
 }

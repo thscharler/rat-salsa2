@@ -195,7 +195,7 @@ impl AppEvents<MinimalApp> for MinimalState {
     fn action(
         &mut self,
         ctx: &mut AppContext<'_, MinimalApp>,
-        event: <MinimalApp as TuiApp>::Action,
+        event: &mut <MinimalApp as TuiApp>::Action,
         data: &mut <MinimalApp as TuiApp>::Data,
     ) -> Result<Control<<MinimalApp as TuiApp>::Action>, <MinimalApp as TuiApp>::Error> {
         let t0 = SystemTime::now();
@@ -203,7 +203,7 @@ impl AppEvents<MinimalApp> for MinimalState {
         // TODO: actions
         flow!(match event {
             MinimalAction::Message(s) => {
-                ctx.g.status.borrow_mut().status(0, s);
+                ctx.g.status.borrow_mut().status(0, &*s);
                 Control::Repaint
             }
         });
