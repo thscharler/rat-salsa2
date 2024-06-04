@@ -327,7 +327,7 @@ where
 
     let timers = Timers::default();
     let queue = Queue::default();
-    let worker = ThreadPool::<App>::build(cfg.n_threats);
+    let worker = ThreadPool::<App::Action, App::Error>::build(cfg.n_threats);
 
     let mut appctx = AppContext {
         g: global,
@@ -381,6 +381,7 @@ where
                     poll_queue.push_back(PollNext::Crossterm);
                 }
             }
+
             if poll_queue.is_empty() {
                 let t = calculate_sleep(&mut appctx, poll_sleep);
                 sleep(t);
@@ -403,11 +404,26 @@ where
 
                 match poll_queue.pop_front() {
                     None => Ok(Control::Continue),
-                    Some(PollNext::Timers) => {
-                        read_timers(&mut app, &mut appctx, &mut term, data, state)
-                    }
+
+                    Some(PollNext::Timers) => match read_timers(&appctx) {
+                        Some(TimerEvent::Repaint(evt)) => repaint_tui(
+                            &mut app,
+                            &mut appctx,
+                            &mut term,
+                            RepaintEvent::Timer(evt),
+                            data,
+                            state,
+                        ),
+                        Some(TimerEvent::Application(evt)) => state.timer(&mut appctx, &evt, data),
+                        None => Ok(Control::Continue),
+                    },
+
                     Some(PollNext::Workers) => read_workers(&worker),
-                    Some(PollNext::Crossterm) => read_crossterm(&mut appctx, data, state),
+
+                    Some(PollNext::Crossterm) => match read_crossterm() {
+                        Ok(event) => state.crossterm(&mut appctx, &event, data),
+                        Err(e) => Err(e),
+                    },
                 }
             }
         } else {
@@ -501,39 +517,22 @@ fn poll_timers<App: TuiApp>(ctx: &AppContext<'_, App>) -> bool {
     ctx.timers.poll()
 }
 
-fn read_timers<App: TuiApp>(
-    app: &mut App,
-    ctx: &mut AppContext<'_, App>,
-    term: &mut Terminal<CrosstermBackend<Stdout>>,
-    data: &mut App::Data,
-    state: &mut App::State,
-) -> Result<Control<App::Action>, App::Error>
-where
-    App::Error: From<io::Error>,
-{
-    match ctx.timers.read() {
-        Some(TimerEvent::Repaint(evt)) => {
-            repaint_tui(app, ctx, term, RepaintEvent::Timer(evt), data, state)
-        }
-        Some(TimerEvent::Application(evt)) => state.timer(ctx, &evt, data),
-        None => Ok(Control::Continue),
-    }
+fn read_timers<App: TuiApp>(ctx: &AppContext<'_, App>) -> Option<TimerEvent> {
+    ctx.timers.read()
 }
 
-fn poll_workers<App: TuiApp>(worker: &ThreadPool<App>) -> bool
+fn poll_workers<Action, Error>(worker: &ThreadPool<Action, Error>) -> bool
 where
-    App::Action: Send + 'static,
-    App::Error: Send + 'static + From<TryRecvError>,
+    Action: Send + 'static,
+    Error: Send + 'static + From<TryRecvError>,
 {
     !worker.is_empty()
 }
 
-fn read_workers<App: TuiApp + Sync + ?Sized>(
-    worker: &ThreadPool<App>,
-) -> Result<Control<App::Action>, App::Error>
+fn read_workers<Action, Error>(worker: &ThreadPool<Action, Error>) -> Result<Control<Action>, Error>
 where
-    App::Action: Send + 'static,
-    App::Error: Send + 'static + From<TryRecvError>,
+    Action: Send + 'static,
+    Error: Send + 'static + From<TryRecvError>,
 {
     worker.try_recv()
 }
@@ -542,16 +541,12 @@ fn poll_crossterm() -> Result<bool, io::Error> {
     crossterm::event::poll(Duration::from_millis(0))
 }
 
-fn read_crossterm<App: TuiApp + Sync + ?Sized>(
-    ctx: &mut AppContext<'_, App>,
-    data: &mut App::Data,
-    state: &mut App::State,
-) -> Result<Control<App::Action>, App::Error>
+fn read_crossterm<Error>() -> Result<crossterm::event::Event, Error>
 where
-    App::Error: From<io::Error>,
+    Error: From<io::Error>,
 {
     match crossterm::event::read() {
-        Ok(evt) => state.crossterm(ctx, &evt, data),
+        Ok(evt) => Ok(evt),
         Err(err) => Err(err.into()),
     }
 }
@@ -564,6 +559,9 @@ fn calculate_sleep<App: TuiApp>(ctx: &mut AppContext<'_, App>, max: Duration) ->
     }
 }
 
+/// Queue for additional event-handling results.
+///
+/// Use [AppContext::queue] to append.
 #[derive(Debug)]
 pub struct Queue<T> {
     queue: RefCell<VecDeque<T>>,
@@ -578,11 +576,13 @@ impl<T> Default for Queue<T> {
 }
 
 impl<T> Queue<T> {
+    /// Enqueue more results from event-handling.
     pub fn queue(&self, ctrl: T) {
         self.queue.borrow_mut().push_back(ctrl);
     }
 }
 
+/// Initiates a background task given as a boxed closure [Task]
 #[derive(Debug)]
 pub struct Tasks<'a, Action, Error> {
     send: &'a Sender<(Cancel, Task<Action, Error>)>,
@@ -599,6 +599,14 @@ where
     Action: 'static + Send,
     Error: 'static + Send,
 {
+    /// Start a background task.
+    ///
+    /// The background task gets a `Arc<Mutex<bool>>` for cancellation support,
+    /// and a channel to communicate back to the event loop.
+    ///
+    /// A clone of the `Arc<Mutex<bool>>` is returned by this function.
+    ///
+    /// If you need more, create an extra channel for communication to the background task.
     pub fn send(&self, task: Task<Action, Error>) -> Result<Cancel, SendError<()>> {
         let cancel = Arc::new(Mutex::new(false));
         match self.send.send((Arc::clone(&cancel), task)) {
@@ -610,22 +618,21 @@ where
 
 /// Basic threadpool
 #[derive(Debug)]
-struct ThreadPool<App: TuiApp + ?Sized> {
-    //TODO separate
-    send: Sender<(Cancel, Task<App::Action, App::Error>)>,
-    recv: Receiver<Result<Control<App::Action>, App::Error>>,
+struct ThreadPool<Action, Error> {
+    send: Sender<(Cancel, Task<Action, Error>)>,
+    recv: Receiver<Result<Control<Action>, Error>>,
     handles: Vec<JoinHandle<()>>,
 }
 
-impl<App: TuiApp + Sync + ?Sized> ThreadPool<App>
+impl<Action, Error> ThreadPool<Action, Error>
 where
-    App::Action: 'static + Send,
-    App::Error: 'static + Send,
+    Action: 'static + Send,
+    Error: 'static + Send,
 {
-    /// New threadpool with the given task executor.
+    /// New thread-pool with the given task executor.
     fn build(n_worker: usize) -> Self {
-        let (send, t_recv) = unbounded::<(Cancel, Task<App::Action, App::Error>)>();
-        let (t_send, recv) = unbounded::<Result<Control<App::Action>, App::Error>>();
+        let (send, t_recv) = unbounded::<(Cancel, Task<Action, Error>)>();
+        let (t_send, recv) = unbounded::<Result<Control<Action>, Error>>();
 
         let mut handles = Vec::new();
 
@@ -664,9 +671,6 @@ where
     }
 
     /// Check the workers for liveness.
-    ///
-    /// Panic:
-    /// Panics if any of the workers panicked themselves.
     fn check_liveness(&self) -> bool {
         for h in &self.handles {
             if h.is_finished() {
@@ -676,15 +680,15 @@ where
         true
     }
 
-    /// Is the channel empty?
+    /// Is the receive-channel empty?
     fn is_empty(&self) -> bool {
         self.recv.is_empty()
     }
 
     /// Receive a result.
-    fn try_recv(&self) -> Result<Control<App::Action>, App::Error>
+    fn try_recv(&self) -> Result<Control<Action>, Error>
     where
-        App::Error: From<TryRecvError>,
+        Error: From<TryRecvError>,
     {
         match self.recv.try_recv() {
             Ok(v) => v,
@@ -699,13 +703,15 @@ where
     }
 }
 
-impl<App: TuiApp + Sync + ?Sized> Drop for ThreadPool<App> {
+impl<Action, Error> Drop for ThreadPool<Action, Error> {
     fn drop(&mut self) {
         shutdown_thread_pool(self);
     }
 }
 
-fn shutdown_thread_pool<App: TuiApp + Sync + ?Sized>(t: &mut ThreadPool<App>) {
+fn shutdown_thread_pool<Action, Error>(t: &mut ThreadPool<Action, Error>) {
+    // dropping the channel will be noticed by the threads running the
+    // background tasks.
     drop(mem::replace(&mut t.send, bounded(0).0));
     for h in t.handles.drain(..) {
         _ = h.join();
