@@ -19,6 +19,7 @@ use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::io::{stdout, Stdout};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+use std::sync::{Arc, Mutex};
 use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
 use std::{io, mem, thread};
@@ -58,8 +59,12 @@ pub trait TuiApp: AppWidget<Self> + Sync + Debug {
 
 /// Type for a background task.
 type Task<Action, Error> = Box<
-    dyn FnOnce(&Sender<Result<Control<Action>, Error>>) -> Result<Control<Action>, Error> + Send,
+    dyn FnOnce(Cancel, &Sender<Result<Control<Action>, Error>>) -> Result<Control<Action>, Error>
+        + Send,
 >;
+
+/// Type for cancelation.
+type Cancel = Arc<Mutex<bool>>;
 
 ///
 /// A trait for application level widgets.
@@ -152,7 +157,7 @@ pub struct AppContext<'a, App: TuiApp + Sync + ?Sized> {
     /// Application timers.
     pub timers: &'a Timers,
     /// Start background tasks.
-    pub tasks: &'a Sender<Task<App::Action, App::Error>>,
+    pub tasks: Tasks<'a, App::Action, App::Error>,
 
     pub non_exhaustive: NonExhaustive,
 }
@@ -170,7 +175,7 @@ pub struct RenderContext<'a, App: TuiApp + Sync + ?Sized> {
     /// Application timers.
     pub timers: &'a Timers,
     /// Start background tasks.
-    pub tasks: &'a Sender<Task<App::Action, App::Error>>,
+    pub tasks: Tasks<'a, App::Action, App::Error>,
 
     /// Frame counter.
     pub counter: usize,
@@ -191,7 +196,7 @@ impl<'a, App: TuiApp + Sync + ?Sized> RenderContext<'a, App> {
             g: self.g,
             theme: self.theme,
             timers: self.timers,
-            tasks: self.tasks,
+            tasks: self.tasks.clone(),
             counter: 0,
             area: buffer.area,
             buffer,
@@ -290,7 +295,7 @@ where
         g: global,
         theme,
         timers: &timers,
-        tasks: &worker.send,
+        tasks: Tasks { send: &worker.send },
         non_exhaustive: NonExhaustive,
     };
 
@@ -412,7 +417,7 @@ where
             g: ctx.g,
             theme: ctx.theme,
             timers: ctx.timers,
-            tasks: ctx.tasks,
+            tasks: ctx.tasks.clone(),
             counter: frame.count(),
             area: frame_area,
             buffer: frame.buffer_mut(),
@@ -499,10 +504,35 @@ fn calculate_sleep<App: TuiApp>(ctx: &mut AppContext<'_, App>, max: Duration) ->
     }
 }
 
+#[derive(Debug)]
+pub struct Tasks<'a, Action, Error> {
+    send: &'a Sender<(Cancel, Task<Action, Error>)>,
+}
+
+impl<'a, Action, Error> Clone for Tasks<'a, Action, Error> {
+    fn clone(&self) -> Self {
+        Self { send: self.send }
+    }
+}
+
+impl<'a, Action, Error> Tasks<'a, Action, Error>
+where
+    Action: 'static + Send,
+    Error: 'static + Send,
+{
+    pub fn send(&self, task: Task<Action, Error>) -> Result<Cancel, SendError<()>> {
+        let cancel = Arc::new(Mutex::new(false));
+        match self.send.send((Arc::clone(&cancel), task)) {
+            Ok(_) => Ok(cancel),
+            Err(_) => Err(SendError(())),
+        }
+    }
+}
+
 /// Basic threadpool
 #[derive(Debug)]
 struct ThreadPool<App: TuiApp + ?Sized> {
-    send: Sender<Task<App::Action, App::Error>>,
+    send: Sender<(Cancel, Task<App::Action, App::Error>)>,
     recv: Receiver<Result<Control<App::Action>, App::Error>>,
     handles: Vec<JoinHandle<()>>,
 }
@@ -514,7 +544,7 @@ where
 {
     /// New threadpool with the given task executor.
     fn build(n_worker: usize) -> Self {
-        let (send, t_recv) = unbounded::<Task<App::Action, App::Error>>();
+        let (send, t_recv) = unbounded::<(Cancel, Task<App::Action, App::Error>)>();
         let (t_send, recv) = unbounded::<Result<Control<App::Action>, App::Error>>();
 
         let mut handles = Vec::new();
@@ -528,8 +558,8 @@ where
 
                 'l: loop {
                     match t_recv.recv() {
-                        Ok(task) => {
-                            let flow = task(&t_send);
+                        Ok((cancel, task)) => {
+                            let flow = task(cancel, &t_send);
                             if let Err(err) = t_send.send(flow) {
                                 debug!("{:?}", err);
                                 break 'l;
