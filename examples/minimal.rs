@@ -6,10 +6,9 @@ use crossterm::event::Event;
 use log::debug;
 use rat_salsa2::event::RepaintEvent;
 use rat_salsa2::{
-    flow, run_tui, AppContext, AppEvents, AppWidget, Control, RenderContext, RunConfig, TimeOut,
-    TuiApp,
+    run_tui, AppContext, AppEvents, AppWidget, Control, RenderContext, RunConfig, TimeOut, TuiApp,
 };
-use rat_widget::event::{ct_event, FocusKeys, HandleEvent};
+use rat_widget::event::{ct_event, flow, FocusKeys, HandleEvent};
 use rat_widget::msgdialog::{MsgDialog, MsgDialogState};
 use rat_widget::statusline::{StatusLine, StatusLineState};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -236,8 +235,9 @@ mod mask0 {
     use crossterm::event::Event;
     #[allow(unused_imports)]
     use log::debug;
-    use rat_salsa2::event::{FocusKeys, HandleEvent, RepaintEvent};
-    use rat_salsa2::{flow, AppContext, AppEvents, AppWidget, Control, RenderContext, TuiApp};
+    use rat_salsa2::event::RepaintEvent;
+    use rat_salsa2::{AppContext, AppEvents, AppWidget, Control, RenderContext, TuiApp};
+    use rat_widget::event::{flow, FocusKeys, HandleEvent};
     use rat_widget::menuline::{MenuLine, MenuLineState, MenuOutcome};
     use ratatui::layout::{Constraint, Direction, Layout, Rect};
     use ratatui::widgets::StatefulWidget;

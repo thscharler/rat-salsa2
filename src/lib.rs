@@ -47,20 +47,6 @@ impl<Action> ConsumedEvent for Control<Action> {
     }
 }
 
-/// Breaks the control-flow.
-/// If the value is not [Control::Continue] this returns early.
-#[macro_export]
-macro_rules! flow {
-    ($x:expr) => {{
-        let r = $x;
-        if !matches!(r, Control::Continue) {
-            return Ok(r);
-        } else {
-            _ = r;
-        }
-    }};
-}
-
 impl<Action> From<Outcome> for Control<Action> {
     fn from(value: Outcome) -> Self {
         match value {
@@ -105,7 +91,10 @@ impl<Action> From<TextOutcome> for Control<Action> {
     }
 }
 
-impl<Action, R: Into<Control<Action>>> From<ScrollOutcome<R>> for Control<Action> {
+impl<Action, R> From<ScrollOutcome<R>> for Control<Action>
+where
+    R: Into<Control<Action>>,
+{
     fn from(value: ScrollOutcome<R>) -> Self {
         match value {
             ScrollOutcome::NotUsed => Control::Continue,
@@ -144,11 +133,7 @@ pub mod event {
     //!
     //! Event-handler traits and Keybindings.
     //!
-
     use crate::TimeOut;
-    pub use rat_widget::event::{
-        crossterm, ct_event, util, ConsumedEvent, FocusKeys, HandleEvent, MouseOnly, Outcome,
-    };
 
     /// Gives some extra information why a repaint was triggered.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
