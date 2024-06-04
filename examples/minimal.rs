@@ -302,7 +302,7 @@ mod mask0 {
             // TODO: handle_mask
             flow!(match self.menu.handle(event, FocusKeys) {
                 MenuOutcome::Activated(0) => {
-                    _ = ctx.tasks.send(Box::new(|v| {
+                    _ = ctx.tasks.send(Box::new(|cancel, send| {
                         Ok(Control::Action(MinimalAction::Message(
                             "hello from the other side".into(),
                         )))
@@ -310,7 +310,7 @@ mod mask0 {
                     Control::Break
                 }
                 MenuOutcome::Activated(1) => {
-                    _ = ctx.tasks.send(Box::new(|v| {
+                    _ = ctx.tasks.send(Box::new(|cancel, send| {
                         Ok(Control::Action(MinimalAction::Message(
                             "another background task finished ...".into(),
                         )))
