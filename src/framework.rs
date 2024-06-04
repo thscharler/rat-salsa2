@@ -14,6 +14,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
 use ratatui::Terminal;
+use std::cell::RefCell;
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -156,10 +157,29 @@ pub struct AppContext<'a, App: TuiApp + Sync + ?Sized> {
     pub theme: &'a App::Theme,
     /// Application timers.
     pub timers: &'a Timers,
+
     /// Start background tasks.
     pub tasks: Tasks<'a, App::Action, App::Error>,
+    /// Queue foreground tasks.
+    pub queue: &'a Queue<Control<App::Action>>,
 
     pub non_exhaustive: NonExhaustive,
+}
+
+impl<'a, App: TuiApp + Sync + ?Sized> AppContext<'a, App> {
+    /// Add a background worker task.
+    pub fn send(&self, task: Task<App::Action, App::Error>) -> Result<Cancel, SendError<()>>
+    where
+        App::Action: 'static + Send,
+        App::Error: 'static + Send,
+    {
+        self.tasks.send(task)
+    }
+
+    /// Queue additional results.
+    pub fn queue(&self, ctrl: impl Into<Control<App::Action>>) {
+        self.queue.queue(ctrl.into())
+    }
 }
 
 /// A collection of context data used for rendering.
@@ -176,6 +196,8 @@ pub struct RenderContext<'a, App: TuiApp + Sync + ?Sized> {
     pub timers: &'a Timers,
     /// Start background tasks.
     pub tasks: Tasks<'a, App::Action, App::Error>,
+    /// Queue foreground tasks.
+    pub queue: &'a Queue<Control<App::Action>>,
 
     /// Frame counter.
     pub counter: usize,
@@ -184,12 +206,26 @@ pub struct RenderContext<'a, App: TuiApp + Sync + ?Sized> {
     /// Buffer.
     pub buffer: &'a mut Buffer,
     /// Output cursor position. Set after rendering is complete.
-    pub cursor: Option<Position>,
+    pub cursor: Option<(u16, u16)>,
 
     pub non_exhaustive: NonExhaustive,
 }
 
 impl<'a, App: TuiApp + Sync + ?Sized> RenderContext<'a, App> {
+    /// Add a background worker task.
+    pub fn send(&self, task: Task<App::Action, App::Error>) -> Result<Cancel, SendError<()>>
+    where
+        App::Action: 'static + Send,
+        App::Error: 'static + Send,
+    {
+        self.tasks.send(task)
+    }
+
+    /// Queue additional results.
+    pub fn queue(&self, ctrl: impl Into<Control<App::Action>>) {
+        self.queue.queue(ctrl.into())
+    }
+
     /// Clone with a new buffer.
     pub fn clone_with(&self, buffer: &'a mut Buffer) -> Self {
         Self {
@@ -197,6 +233,7 @@ impl<'a, App: TuiApp + Sync + ?Sized> RenderContext<'a, App> {
             theme: self.theme,
             timers: self.timers,
             tasks: self.tasks.clone(),
+            queue: self.queue,
             counter: 0,
             area: buffer.area,
             buffer,
@@ -289,6 +326,7 @@ where
     term.clear()?;
 
     let timers = Timers::default();
+    let queue = Queue::default();
     let worker = ThreadPool::<App>::build(cfg.n_threats);
 
     let mut appctx = AppContext {
@@ -296,6 +334,7 @@ where
         theme,
         timers: &timers,
         tasks: Tasks { send: &worker.send },
+        queue: &queue,
         non_exhaustive: NonExhaustive,
     };
 
@@ -324,6 +363,12 @@ where
             break 'ui false;
         }
 
+        // queued stuff first
+        if matches!(flow, Ok(Control::Continue)) && poll_queued(&queue) {
+            flow = read_queued(&queue);
+        }
+
+        // poll other events
         flow = if matches!(flow, Ok(Control::Continue)) {
             if poll_queue.is_empty() {
                 if poll_timers(&mut appctx) {
@@ -418,6 +463,7 @@ where
             theme: ctx.theme,
             timers: ctx.timers,
             tasks: ctx.tasks.clone(),
+            queue: ctx.queue,
             counter: frame.count(),
             area: frame_area,
             buffer: frame.buffer_mut(),
@@ -429,15 +475,29 @@ where
             .render(&mut ctx, &reason, frame_area, data, state)
             .map(|_| Control::Continue);
 
-        if let Some(cursor) = ctx.cursor {
-            frame.set_cursor(cursor.x, cursor.y);
+        if let Some((cursor_x, cursor_y)) = ctx.cursor {
+            frame.set_cursor(cursor_x, cursor_y);
         }
     })?;
 
     res
 }
 
-fn poll_timers<App: TuiApp>(ctx: &mut AppContext<'_, App>) -> bool {
+fn poll_queued<Action>(queue: &Queue<Control<Action>>) -> bool {
+    !queue.queue.borrow().is_empty()
+}
+
+fn read_queued<Action, Error>(queue: &Queue<Control<Action>>) -> Result<Control<Action>, Error>
+where
+    Error: From<TryRecvError>,
+{
+    match queue.queue.borrow_mut().pop_front() {
+        None => return Err(TryRecvError::Empty.into()),
+        Some(v) => Ok(v),
+    }
+}
+
+fn poll_timers<App: TuiApp>(ctx: &AppContext<'_, App>) -> bool {
     ctx.timers.poll()
 }
 
@@ -505,6 +565,25 @@ fn calculate_sleep<App: TuiApp>(ctx: &mut AppContext<'_, App>, max: Duration) ->
 }
 
 #[derive(Debug)]
+pub struct Queue<T> {
+    queue: RefCell<VecDeque<T>>,
+}
+
+impl<T> Default for Queue<T> {
+    fn default() -> Self {
+        Self {
+            queue: RefCell::new(VecDeque::default()),
+        }
+    }
+}
+
+impl<T> Queue<T> {
+    pub fn queue(&self, ctrl: T) {
+        self.queue.borrow_mut().push_back(ctrl);
+    }
+}
+
+#[derive(Debug)]
 pub struct Tasks<'a, Action, Error> {
     send: &'a Sender<(Cancel, Task<Action, Error>)>,
 }
@@ -532,6 +611,7 @@ where
 /// Basic threadpool
 #[derive(Debug)]
 struct ThreadPool<App: TuiApp + ?Sized> {
+    //TODO separate
     send: Sender<(Cancel, Task<App::Action, App::Error>)>,
     recv: Receiver<Result<Control<App::Action>, App::Error>>,
     handles: Vec<JoinHandle<()>>,
