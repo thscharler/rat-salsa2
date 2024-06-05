@@ -12,7 +12,7 @@ use crossterm::ExecutableCommand;
 use log::debug;
 use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Position, Rect};
+use ratatui::layout::Rect;
 use ratatui::Terminal;
 use std::cell::RefCell;
 use std::cmp::min;
@@ -159,16 +159,16 @@ pub struct AppContext<'a, App: TuiApp + Sync + ?Sized> {
     pub timers: &'a Timers,
 
     /// Start background tasks.
-    pub tasks: Tasks<'a, App::Action, App::Error>,
+    tasks: Tasks<'a, App::Action, App::Error>,
     /// Queue foreground tasks.
-    pub queue: &'a Queue<Control<App::Action>>,
+    queue: &'a Queue<Control<App::Action>>,
 
     pub non_exhaustive: NonExhaustive,
 }
 
 impl<'a, App: TuiApp + Sync + ?Sized> AppContext<'a, App> {
     /// Add a background worker task.
-    pub fn send(&self, task: Task<App::Action, App::Error>) -> Result<Cancel, SendError<()>>
+    pub fn spawn(&self, task: Task<App::Action, App::Error>) -> Result<Cancel, SendError<()>>
     where
         App::Action: 'static + Send,
         App::Error: 'static + Send,
@@ -195,9 +195,9 @@ pub struct RenderContext<'a, App: TuiApp + Sync + ?Sized> {
     /// Application timers.
     pub timers: &'a Timers,
     /// Start background tasks.
-    pub tasks: Tasks<'a, App::Action, App::Error>,
+    tasks: Tasks<'a, App::Action, App::Error>,
     /// Queue foreground tasks.
-    pub queue: &'a Queue<Control<App::Action>>,
+    queue: &'a Queue<Control<App::Action>>,
 
     /// Frame counter.
     pub counter: usize,
@@ -213,7 +213,7 @@ pub struct RenderContext<'a, App: TuiApp + Sync + ?Sized> {
 
 impl<'a, App: TuiApp + Sync + ?Sized> RenderContext<'a, App> {
     /// Add a background worker task.
-    pub fn send(&self, task: Task<App::Action, App::Error>) -> Result<Cancel, SendError<()>>
+    pub fn spawn(&self, task: Task<App::Action, App::Error>) -> Result<Cancel, SendError<()>>
     where
         App::Action: 'static + Send,
         App::Error: 'static + Send,
@@ -563,7 +563,7 @@ fn calculate_sleep<App: TuiApp>(ctx: &mut AppContext<'_, App>, max: Duration) ->
 ///
 /// Use [AppContext::queue] to append.
 #[derive(Debug)]
-pub struct Queue<T> {
+struct Queue<T> {
     queue: RefCell<VecDeque<T>>,
 }
 
@@ -584,7 +584,7 @@ impl<T> Queue<T> {
 
 /// Initiates a background task given as a boxed closure [Task]
 #[derive(Debug)]
-pub struct Tasks<'a, Action, Error> {
+struct Tasks<'a, Action, Error> {
     send: &'a Sender<(Cancel, Task<Action, Error>)>,
 }
 
