@@ -577,7 +577,7 @@ impl<T> Default for Queue<T> {
 
 impl<T> Queue<T> {
     /// Enqueue more results from event-handling.
-    pub fn queue(&self, ctrl: T) {
+    fn queue(&self, ctrl: T) {
         self.queue.borrow_mut().push_back(ctrl);
     }
 }
@@ -607,7 +607,7 @@ where
     /// A clone of the `Arc<Mutex<bool>>` is returned by this function.
     ///
     /// If you need more, create an extra channel for communication to the background task.
-    pub fn send(&self, task: Task<Action, Error>) -> Result<Cancel, SendError<()>> {
+    fn send(&self, task: Task<Action, Error>) -> Result<Cancel, SendError<()>> {
         let cancel = Arc::new(Mutex::new(false));
         match self.send.send((Arc::clone(&cancel), task)) {
             Ok(_) => Ok(cancel),
