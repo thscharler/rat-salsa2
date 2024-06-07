@@ -1,14 +1,16 @@
 #![allow(unused_variables)]
 
 use crate::mask0::{Mask0, Mask0State};
+use crate::theme::Theme;
+use anyhow::Error;
 use crossterm::event::Event;
 #[allow(unused_imports)]
 use log::debug;
 use rat_salsa2::event::RepaintEvent;
 use rat_salsa2::{
-    run_tui, AppContext, AppEvents, AppWidget, Control, RenderContext, RunConfig, TimeOut, TuiApp,
+    run_tui, AppContext, AppEvents, AppWidget, Control, RenderContext, RunConfig, TimeOut,
 };
-use rat_widget::event::{ct_event, flow, FocusKeys, HandleEvent};
+use rat_widget::event::{ct_event, flow, flow_ok, FocusKeys, HandleEvent};
 use rat_widget::msgdialog::{MsgDialog, MsgDialogState};
 use rat_widget::statusline::{StatusLine, StatusLineState};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -17,19 +19,18 @@ use std::cell::RefCell;
 use std::fs;
 use std::time::{Duration, SystemTime};
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() -> Result<(), Error> {
     setup_logging()?;
 
-    let app = MinimalApp { mask0: Mask0 };
-    let mut global = GlobalState::default();
-    let mut data = MinimalData::default();
+    let config = MinimalConfig::default();
+    let mut global = GlobalState::new(config, &theme::ONEDARK);
+
+    let app = MinimalApp;
     let mut state = MinimalState::default();
 
     run_tui(
         app,
         &mut global,
-        &theme::ONEDARK,
-        &mut data,
         &mut state,
         RunConfig {
             n_threats: 1,
@@ -44,13 +45,17 @@ fn main() -> Result<(), anyhow::Error> {
 
 #[derive(Debug)]
 pub struct GlobalState {
+    pub cfg: MinimalConfig,
+    pub theme: &'static Theme,
     pub status: RefCell<StatusLineState>,
     pub error_dlg: RefCell<MsgDialogState>,
 }
 
-impl Default for GlobalState {
-    fn default() -> Self {
+impl GlobalState {
+    fn new(cfg: MinimalConfig, theme: &'static Theme) -> Self {
         Self {
+            cfg,
+            theme,
             status: Default::default(),
             error_dlg: Default::default(),
         }
@@ -60,7 +65,7 @@ impl Default for GlobalState {
 // -----------------------------------------------------------------------
 
 #[derive(Debug, Default)]
-pub struct MinimalData {}
+pub struct MinimalConfig {}
 
 #[derive(Debug)]
 pub enum MinimalAction {
@@ -70,34 +75,23 @@ pub enum MinimalAction {
 // -----------------------------------------------------------------------
 
 #[derive(Debug)]
-pub struct MinimalApp {
-    pub mask0: Mask0,
-}
-
-impl TuiApp for MinimalApp {
-    type Global = GlobalState;
-    type Data = MinimalData;
-    type Action = MinimalAction;
-    type Error = anyhow::Error;
-    type Theme = theme::Theme;
-}
+pub struct MinimalApp;
 
 #[derive(Debug, Default)]
 pub struct MinimalState {
     pub mask0: Mask0State,
 }
 
-impl AppWidget<MinimalApp> for MinimalApp {
+impl AppWidget<GlobalState, MinimalAction, Error> for MinimalApp {
     type State = MinimalState;
 
     fn render(
         &mut self,
-        ctx: &mut RenderContext<'_, MinimalApp>,
+        ctx: &mut RenderContext<'_, GlobalState, MinimalAction, Error>,
         event: &RepaintEvent,
         area: Rect,
-        data: &mut <MinimalApp as TuiApp>::Data,
         state: &mut Self::State,
-    ) -> Result<(), <MinimalApp as TuiApp>::Error> {
+    ) -> Result<(), Error> {
         let t0 = SystemTime::now();
 
         let r = Layout::new(
@@ -106,11 +100,10 @@ impl AppWidget<MinimalApp> for MinimalApp {
         )
         .split(area);
 
-        self.mask0
-            .render(ctx, event, r[0], data, &mut state.mask0)?;
+        Mask0.render(ctx, event, r[0], &mut state.mask0)?;
 
         if ctx.g.error_dlg.borrow().active {
-            let err = MsgDialog::new().styles(ctx.theme.status_dialog_style());
+            let err = MsgDialog::new().styles(ctx.g.theme.status_dialog_style());
             err.render(r[0], ctx.buffer, &mut ctx.g.error_dlg.borrow_mut());
         }
 
@@ -127,48 +120,45 @@ impl AppWidget<MinimalApp> for MinimalApp {
                 Constraint::Length(12),
                 Constraint::Length(12),
             ])
-            .styles(ctx.theme.statusline_style());
+            .styles(ctx.g.theme.statusline_style());
         status.render(r[1], ctx.buffer, &mut ctx.g.status.borrow_mut());
 
         Ok(())
     }
 }
 
-impl AppEvents<MinimalApp> for MinimalState {
+impl AppEvents<GlobalState, MinimalAction, Error> for MinimalState {
     fn init(
         &mut self,
-        ctx: &mut AppContext<'_, MinimalApp>,
-        data: &mut <MinimalApp as TuiApp>::Data,
-    ) -> Result<(), <MinimalApp as TuiApp>::Error> {
+        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
+    ) -> Result<(), Error> {
         Ok(())
     }
 
     fn timer(
         &mut self,
-        ctx: &mut AppContext<'_, MinimalApp>,
+        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
         event: &TimeOut,
-        data: &mut <MinimalApp as TuiApp>::Data,
-    ) -> Result<Control<<MinimalApp as TuiApp>::Action>, <MinimalApp as TuiApp>::Error> {
+    ) -> Result<Control<MinimalAction>, Error> {
         Ok(Control::Continue)
     }
 
     fn crossterm(
         &mut self,
-        ctx: &mut AppContext<'_, MinimalApp>,
+        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
         event: &Event,
-        data: &mut <MinimalApp as TuiApp>::Data,
-    ) -> Result<Control<<MinimalApp as TuiApp>::Action>, <MinimalApp as TuiApp>::Error> {
+    ) -> Result<Control<MinimalAction>, Error> {
         use crossterm::event::*;
 
         let t0 = SystemTime::now();
 
-        flow!(match &event {
+        flow_ok!(match &event {
             Event::Resize(_, _) => Control::Repaint,
             ct_event!(key press CONTROL-'q') => Control::Quit,
             _ => Control::Continue,
         });
 
-        flow!({
+        flow_ok!({
             if ctx.g.error_dlg.borrow().active {
                 ctx.g
                     .error_dlg
@@ -180,7 +170,7 @@ impl AppEvents<MinimalApp> for MinimalState {
             }
         });
 
-        flow!(self.mask0.crossterm(ctx, &event, data)?);
+        flow_ok!(self.mask0.crossterm(ctx, &event)?);
 
         let el = t0.elapsed().unwrap_or(Duration::from_nanos(0));
         ctx.g
@@ -193,14 +183,13 @@ impl AppEvents<MinimalApp> for MinimalState {
 
     fn action(
         &mut self,
-        ctx: &mut AppContext<'_, MinimalApp>,
-        event: &mut <MinimalApp as TuiApp>::Action,
-        data: &mut <MinimalApp as TuiApp>::Data,
-    ) -> Result<Control<<MinimalApp as TuiApp>::Action>, <MinimalApp as TuiApp>::Error> {
+        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
+        event: &mut MinimalAction,
+    ) -> Result<Control<MinimalAction>, Error> {
         let t0 = SystemTime::now();
 
         // TODO: actions
-        flow!(match event {
+        flow_ok!(match event {
             MinimalAction::Message(s) => {
                 ctx.g.status.borrow_mut().status(0, &*s);
                 Control::Repaint
@@ -218,10 +207,9 @@ impl AppEvents<MinimalApp> for MinimalState {
 
     fn error(
         &self,
-        ctx: &mut AppContext<'_, MinimalApp>,
-        event: <MinimalApp as TuiApp>::Error,
-        data: &mut <MinimalApp as TuiApp>::Data,
-    ) -> Result<Control<<MinimalApp as TuiApp>::Action>, <MinimalApp as TuiApp>::Error> {
+        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
+        event: Error,
+    ) -> Result<Control<MinimalAction>, Error> {
         ctx.g
             .error_dlg
             .borrow_mut()
@@ -231,13 +219,14 @@ impl AppEvents<MinimalApp> for MinimalState {
 }
 
 mod mask0 {
-    use crate::{MinimalAction, MinimalApp};
+    use crate::{GlobalState, MinimalAction};
+    use anyhow::Error;
     use crossterm::event::Event;
     #[allow(unused_imports)]
     use log::debug;
     use rat_salsa2::event::RepaintEvent;
-    use rat_salsa2::{AppContext, AppEvents, AppWidget, Control, RenderContext, TuiApp};
-    use rat_widget::event::{flow, FocusKeys, HandleEvent};
+    use rat_salsa2::{AppContext, AppEvents, AppWidget, Control, RenderContext};
+    use rat_widget::event::{flow, flow_ok, FocusKeys, HandleEvent};
     use rat_widget::menuline::{MenuLine, MenuLineState, MenuOutcome};
     use ratatui::layout::{Constraint, Direction, Layout, Rect};
     use ratatui::widgets::StatefulWidget;
@@ -260,17 +249,16 @@ mod mask0 {
         }
     }
 
-    impl AppWidget<MinimalApp> for Mask0 {
+    impl AppWidget<GlobalState, MinimalAction, Error> for Mask0 {
         type State = Mask0State;
 
         fn render(
             &mut self,
-            ctx: &mut RenderContext<'_, MinimalApp>,
+            ctx: &mut RenderContext<'_, GlobalState, MinimalAction, Error>,
             event: &RepaintEvent,
             area: Rect,
-            data: &mut <MinimalApp as TuiApp>::Data,
             state: &mut Self::State,
-        ) -> Result<(), <MinimalApp as TuiApp>::Error> {
+        ) -> Result<(), Error> {
             // TODO: repaint_mask
 
             let r = Layout::new(
@@ -280,7 +268,7 @@ mod mask0 {
             .split(area);
 
             let menu = MenuLine::new()
-                .styles(ctx.theme.menu_style())
+                .styles(ctx.g.theme.menu_style())
                 .add("One")
                 .add("Two")
                 .add("Three")
@@ -291,18 +279,16 @@ mod mask0 {
         }
     }
 
-    impl AppEvents<MinimalApp> for Mask0State {
+    impl AppEvents<GlobalState, MinimalAction, Error> for Mask0State {
         fn crossterm(
             &mut self,
-            ctx: &mut AppContext<'_, MinimalApp>,
+            ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
             event: &Event,
-            data: &mut <MinimalApp as TuiApp>::Data,
-        ) -> Result<Control<<MinimalApp as TuiApp>::Action>, <MinimalApp as TuiApp>::Error>
-        {
+        ) -> Result<Control<MinimalAction>, Error> {
             // TODO: handle_mask
-            flow!(match self.menu.handle(event, FocusKeys) {
+            flow_ok!(match self.menu.handle(event, FocusKeys) {
                 MenuOutcome::Activated(0) => {
-                    _ = ctx.tasks.send(Box::new(|cancel, send| {
+                    _ = ctx.spawn(Box::new(|cancel, send| {
                         Ok(Control::Action(MinimalAction::Message(
                             "hello from the other side".into(),
                         )))
@@ -310,7 +296,7 @@ mod mask0 {
                     Control::Break
                 }
                 MenuOutcome::Activated(1) => {
-                    _ = ctx.tasks.send(Box::new(|cancel, send| {
+                    _ = ctx.spawn(Box::new(|cancel, send| {
                         Ok(Control::Action(MinimalAction::Message(
                             "another background task finished ...".into(),
                         )))
@@ -510,7 +496,7 @@ mod theme {
     };
 }
 
-fn setup_logging() -> Result<(), anyhow::Error> {
+fn setup_logging() -> Result<(), Error> {
     fs::remove_file("log.log")?;
     fern::Dispatch::new()
         .format(|out, message, record| {

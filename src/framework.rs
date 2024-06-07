@@ -1,5 +1,6 @@
 use crate::_private::NonExhaustive;
-use crate::{Control, RepaintEvent, TimeOut, TimerEvent, Timers};
+use crate::timer::{TimerHandle, Timers};
+use crate::{Control, RepaintEvent, TimeOut, TimerDef, TimerEvent};
 use crossbeam::channel::{bounded, unbounded, Receiver, SendError, Sender, TryRecvError};
 use crossterm::cursor::{DisableBlinking, EnableBlinking, SetCursorStyle};
 use crossterm::event::{
@@ -25,37 +26,76 @@ use std::thread::{sleep, JoinHandle};
 use std::time::Duration;
 use std::{io, mem, thread};
 
-/// A trait for a TUI-App.
 ///
-/// The trait is only needed to collect all the involved types.
-/// It can be easily implemented for a unit-struct.
+/// A trait for application level widgets.
 ///
-/// ```rust ignore
-/// struct MyApp;
+/// This trait is an anlog to ratatui's StatefulWidget, and
+/// does only the rendering part. It's extended with all the
+/// extras needed in an application.
 ///
-/// impl TuiApp for MyApp {
-///     // ...
-/// }
-/// ```
-///
-/// All operations work with the [AppWidget] and [AppEvents] traits.
-///
-pub trait TuiApp: AppWidget<Self> + Sync + Debug {
-    /// Type for some global ui state.
-    /// The example uses this for the statusbar and a message-dialog.
-    /// Or any other uistate that must be reachable from every app-widget.
-    type Global: Debug;
+#[allow(unused_variables)]
+pub trait AppWidget<Global, Action, Error> {
+    /// Type of the State.
+    type State: AppEvents<Global, Action, Error> + Debug;
 
-    /// Application data.
-    type Data: Debug;
+    /// Renders an application widget.
+    fn render(
+        &mut self,
+        ctx: &mut RenderContext<'_, Global, Action, Error>,
+        event: &RepaintEvent,
+        area: Rect,
+        state: &mut Self::State,
+    ) -> Result<(), Error>;
+}
 
-    /// Type for actions
-    type Action: Debug;
-    /// Error type.
-    type Error: Debug;
+///
+/// Eventhandling for application level widgets.
+///
+/// This one collects all currently defined events.
+/// Implement this one on the state struct.
+///
+#[allow(unused_variables)]
+pub trait AppEvents<Global, Action, Error> {
+    /// Initialize the application. Runs before the first repaint.
+    fn init(&mut self, ctx: &mut AppContext<'_, Global, Action, Error>) -> Result<(), Error> {
+        Ok(())
+    }
 
-    /// Type for the theme.
-    type Theme: Debug;
+    /// Timeout event.
+    fn timer(
+        &mut self,
+        ctx: &mut AppContext<'_, Global, Action, Error>,
+        event: &TimeOut,
+    ) -> Result<Control<Action>, Error> {
+        Ok(Control::Continue)
+    }
+
+    /// Crossterm event.
+    fn crossterm(
+        &mut self,
+        ctx: &mut AppContext<'_, Global, Action, Error>,
+        event: &crossterm::event::Event,
+    ) -> Result<Control<Action>, Error> {
+        Ok(Control::Continue)
+    }
+
+    /// Run an action.
+    fn action(
+        &mut self,
+        ctx: &mut AppContext<'_, Global, Action, Error>,
+        event: &mut Action,
+    ) -> Result<Control<Action>, Error> {
+        Ok(Control::Continue)
+    }
+
+    /// Do error handling.
+    fn error(
+        &self,
+        ctx: &mut AppContext<'_, Global, Action, Error>,
+        event: Error,
+    ) -> Result<Control<Action>, Error> {
+        Ok(Control::Continue)
+    }
 }
 
 /// Type for a background task.
@@ -67,137 +107,65 @@ type Task<Action, Error> = Box<
 /// Type for cancelation.
 type Cancel = Arc<Mutex<bool>>;
 
-///
-/// A trait for application level widgets.
-///
-/// This trait is an anlog to ratatui's StatefulWidget, and
-/// does only the rendering part. It's extended with all the
-/// extras needed in an application.
-///
-#[allow(unused_variables)]
-pub trait AppWidget<App: TuiApp + Sync + ?Sized> {
-    /// Type of the State.
-    type State: AppEvents<App> + Debug;
-
-    /// Renders an application widget.
-    fn render(
-        &mut self,
-        ctx: &mut RenderContext<'_, App>,
-        event: &RepaintEvent,
-        area: Rect,
-        data: &mut <App as TuiApp>::Data,
-        state: &mut Self::State,
-    ) -> Result<(), <App as TuiApp>::Error>;
-}
-
-///
-/// Eventhandling for application level widgets.
-///
-/// This one collects all currently defined events.
-/// Implement this one on the state struct.
-///
-#[allow(unused_variables)]
-pub trait AppEvents<App: TuiApp + Sync + ?Sized> {
-    /// Initialize the application. Runs before the first repaint.
-    fn init(
-        &mut self,
-        ctx: &mut AppContext<'_, App>,
-        data: &mut <App as TuiApp>::Data,
-    ) -> Result<(), <App as TuiApp>::Error> {
-        Ok(())
-    }
-
-    /// Timeout event.
-    fn timer(
-        &mut self,
-        ctx: &mut AppContext<'_, App>,
-        event: &TimeOut,
-        data: &mut <App as TuiApp>::Data,
-    ) -> Result<Control<<App as TuiApp>::Action>, <App as TuiApp>::Error> {
-        Ok(Control::Continue)
-    }
-
-    /// Crossterm event.
-    fn crossterm(
-        &mut self,
-        ctx: &mut AppContext<'_, App>,
-        event: &crossterm::event::Event,
-        data: &mut <App as TuiApp>::Data,
-    ) -> Result<Control<<App as TuiApp>::Action>, <App as TuiApp>::Error> {
-        Ok(Control::Continue)
-    }
-
-    /// Run an action.
-    fn action(
-        &mut self,
-        ctx: &mut AppContext<'_, App>,
-        event: &mut <App as TuiApp>::Action,
-        data: &mut <App as TuiApp>::Data,
-    ) -> Result<Control<<App as TuiApp>::Action>, <App as TuiApp>::Error> {
-        Ok(Control::Continue)
-    }
-
-    /// Do error handling.
-    fn error(
-        &self,
-        ctx: &mut AppContext<'_, App>,
-        event: <App as TuiApp>::Error,
-        data: &mut <App as TuiApp>::Data,
-    ) -> Result<Control<<App as TuiApp>::Action>, <App as TuiApp>::Error> {
-        Ok(Control::Continue)
-    }
-}
-
 /// A collection of context data used by the application.
 #[derive(Debug)]
-pub struct AppContext<'a, App: TuiApp + Sync + ?Sized> {
+pub struct AppContext<'a, Global, Action, Error> {
     /// Some global state for the application.
-    pub g: &'a mut App::Global,
-    /// Theme data.
-    pub theme: &'a App::Theme,
+    pub g: &'a mut Global,
     /// Application timers.
-    pub timers: &'a Timers,
-
+    timers: &'a Timers,
     /// Start background tasks.
-    tasks: Tasks<'a, App::Action, App::Error>,
+    tasks: Tasks<'a, Action, Error>,
     /// Queue foreground tasks.
-    queue: &'a Queue<Control<App::Action>>,
+    queue: &'a Queue<Control<Action>>,
 
     pub non_exhaustive: NonExhaustive,
 }
 
-impl<'a, App: TuiApp + Sync + ?Sized> AppContext<'a, App> {
+impl<'a, Global, Action, Error> AppContext<'a, Global, Action, Error> {
+    /// Add a timer.
+    #[inline]
+    pub fn add_timer(&self, t: TimerDef) -> TimerHandle {
+        self.timers.add(t)
+    }
+
+    /// Remove a timer.
+    #[inline]
+    pub fn remove_timer(&self, tag: TimerHandle) {
+        self.timers.remove(tag)
+    }
+
     /// Add a background worker task.
-    pub fn spawn(&self, task: Task<App::Action, App::Error>) -> Result<Cancel, SendError<()>>
+    #[inline]
+    pub fn spawn(&self, task: Task<Action, Error>) -> Result<Cancel, SendError<()>>
     where
-        App::Action: 'static + Send,
-        App::Error: 'static + Send,
+        Action: 'static + Send,
+        Error: 'static + Send,
     {
         self.tasks.send(task)
     }
 
     /// Queue additional results.
-    pub fn queue(&self, ctrl: impl Into<Control<App::Action>>) {
+    #[inline]
+    pub fn queue(&self, ctrl: impl Into<Control<Action>>) {
         self.queue.queue(ctrl.into())
     }
 }
 
 /// A collection of context data used for rendering.
 #[derive(Debug)]
-pub struct RenderContext<'a, App: TuiApp + Sync + ?Sized> {
+pub struct RenderContext<'a, Global, Action, Error> {
     /// Some global state for the application.
     ///
     /// This needs to be a plain & for [clone_with](RenderContext::clone_with).
     /// If you need to modify it, use Cell or RefCell.
-    pub g: &'a App::Global,
-    /// Theme data.
-    pub theme: &'a App::Theme,
+    pub g: &'a Global,
     /// Application timers.
-    pub timers: &'a Timers,
+    timers: &'a Timers,
     /// Start background tasks.
-    tasks: Tasks<'a, App::Action, App::Error>,
+    tasks: Tasks<'a, Action, Error>,
     /// Queue foreground tasks.
-    queue: &'a Queue<Control<App::Action>>,
+    queue: &'a Queue<Control<Action>>,
 
     /// Frame counter.
     pub counter: usize,
@@ -211,26 +179,40 @@ pub struct RenderContext<'a, App: TuiApp + Sync + ?Sized> {
     pub non_exhaustive: NonExhaustive,
 }
 
-impl<'a, App: TuiApp + Sync + ?Sized> RenderContext<'a, App> {
+impl<'a, Global, Action, Error> RenderContext<'a, Global, Action, Error> {
+    /// Add a timer.
+    #[inline]
+    pub fn add_timer(&self, t: TimerDef) -> TimerHandle {
+        self.timers.add(t)
+    }
+
+    /// Remove a timer.
+    #[inline]
+    pub fn remove_timer(&self, tag: TimerHandle) {
+        self.timers.remove(tag)
+    }
+
     /// Add a background worker task.
-    pub fn spawn(&self, task: Task<App::Action, App::Error>) -> Result<Cancel, SendError<()>>
+    #[inline]
+    pub fn spawn(&self, task: Task<Action, Error>) -> Result<Cancel, SendError<()>>
     where
-        App::Action: 'static + Send,
-        App::Error: 'static + Send,
+        Action: 'static + Send,
+        Error: 'static + Send,
     {
         self.tasks.send(task)
     }
 
     /// Queue additional results.
-    pub fn queue(&self, ctrl: impl Into<Control<App::Action>>) {
+    #[inline]
+    pub fn queue(&self, ctrl: impl Into<Control<Action>>) {
         self.queue.queue(ctrl.into())
     }
 
     /// Clone with a new buffer.
+    #[inline]
     pub fn clone_with(&self, buffer: &'a mut Buffer) -> Self {
         Self {
             g: self.g,
-            theme: self.theme,
             timers: self.timers,
             tasks: self.tasks.clone(),
             queue: self.queue,
@@ -264,17 +246,16 @@ impl Default for RunConfig {
 }
 
 /// Run the event-loop
-pub fn run_tui<App: TuiApp>(
-    app: App,
-    global: &mut App::Global,
-    theme: &App::Theme,
-    data: &mut App::Data,
-    state: &mut App::State,
+pub fn run_tui<Widget, Global, Action, Error>(
+    app: Widget,
+    global: &mut Global,
+    state: &mut Widget::State,
     cfg: RunConfig,
-) -> Result<(), App::Error>
+) -> Result<(), Error>
 where
-    App::Action: Send + 'static,
-    App::Error: Send + 'static + From<TryRecvError> + From<io::Error> + From<SendError<()>>,
+    Widget: AppWidget<Global, Action, Error>,
+    Action: Send + 'static,
+    Error: Send + 'static + From<TryRecvError> + From<io::Error> + From<SendError<()>>,
 {
     stdout().execute(EnterAlternateScreen)?;
     stdout().execute(EnableMouseCapture)?;
@@ -283,9 +264,7 @@ where
     stdout().execute(SetCursorStyle::BlinkingBar)?;
     enable_raw_mode()?;
 
-    let r = match catch_unwind(AssertUnwindSafe(|| {
-        _run_tui(app, global, theme, data, state, cfg)
-    })) {
+    let r = match catch_unwind(AssertUnwindSafe(|| _run_tui(app, global, state, cfg))) {
         Ok(v) => v,
         Err(e) => {
             _ = disable_raw_mode();
@@ -309,29 +288,26 @@ where
     r
 }
 
-/// Run the event-loop.
-fn _run_tui<App: TuiApp>(
+fn _run_tui<App, Global, Action, Error>(
     mut app: App,
-    global: &mut App::Global,
-    theme: &App::Theme,
-    data: &mut App::Data,
+    global: &mut Global,
     state: &mut App::State,
     cfg: RunConfig,
-) -> Result<(), App::Error>
+) -> Result<(), Error>
 where
-    App::Action: Send + 'static,
-    App::Error: Send + 'static + From<TryRecvError> + From<io::Error> + From<SendError<()>>,
+    App: AppWidget<Global, Action, Error>,
+    Action: Send + 'static,
+    Error: Send + 'static + From<TryRecvError> + From<io::Error> + From<SendError<()>>,
 {
     let mut term = Terminal::new(CrosstermBackend::new(stdout()))?;
     term.clear()?;
 
     let timers = Timers::default();
     let queue = Queue::default();
-    let worker = ThreadPool::<App::Action, App::Error>::build(cfg.n_threats);
+    let worker = ThreadPool::<Action, Error>::build(cfg.n_threats);
 
     let mut appctx = AppContext {
         g: global,
-        theme,
         timers: &timers,
         tasks: Tasks { send: &worker.send },
         queue: &queue,
@@ -344,7 +320,7 @@ where
     let mut poll_sleep = Duration::from_millis(10);
 
     // init
-    state.init(&mut appctx, data)?;
+    state.init(&mut appctx)?;
 
     // initial repaint.
     _ = repaint_tui(
@@ -352,7 +328,6 @@ where
         &mut appctx,
         &mut term,
         RepaintEvent::Repaint,
-        data,
         state,
     )?;
 
@@ -371,7 +346,7 @@ where
         // poll other events
         flow = if matches!(flow, Ok(Control::Continue)) {
             if poll_queue.is_empty() {
-                if poll_timers(&mut appctx) {
+                if poll_timers(&timers) {
                     poll_queue.push_back(PollNext::Timers);
                 }
                 if poll_workers(&worker) {
@@ -383,7 +358,7 @@ where
             }
 
             if poll_queue.is_empty() {
-                let t = calculate_sleep(&mut appctx, poll_sleep);
+                let t = calculate_sleep(&timers, poll_sleep);
                 sleep(t);
                 if poll_sleep < Duration::from_millis(10) {
                     // Back off slowly.
@@ -405,23 +380,22 @@ where
                 match poll_queue.pop_front() {
                     None => Ok(Control::Continue),
 
-                    Some(PollNext::Timers) => match read_timers(&appctx) {
+                    Some(PollNext::Timers) => match read_timers(&timers) {
                         Some(TimerEvent::Repaint(evt)) => repaint_tui(
                             &mut app,
                             &mut appctx,
                             &mut term,
                             RepaintEvent::Timer(evt),
-                            data,
                             state,
                         ),
-                        Some(TimerEvent::Application(evt)) => state.timer(&mut appctx, &evt, data),
+                        Some(TimerEvent::Application(evt)) => state.timer(&mut appctx, &evt),
                         None => Ok(Control::Continue),
                     },
 
                     Some(PollNext::Workers) => read_workers(&worker),
 
                     Some(PollNext::Crossterm) => match read_crossterm() {
-                        Ok(event) => state.crossterm(&mut appctx, &event, data),
+                        Ok(event) => state.crossterm(&mut appctx, &event),
                         Err(e) => Err(e),
                     },
                 }
@@ -438,12 +412,11 @@ where
                 &mut appctx,
                 &mut term,
                 RepaintEvent::Repaint,
-                data,
                 state,
             ),
-            Ok(Control::Action(mut action)) => state.action(&mut appctx, &mut action, data),
+            Ok(Control::Action(mut action)) => state.action(&mut appctx, &mut action),
             Ok(Control::Quit) => break 'ui true,
-            Err(e) => state.error(&mut appctx, e, data),
+            Err(e) => state.error(&mut appctx, e),
         }
     };
 
@@ -457,16 +430,16 @@ where
     Ok(())
 }
 
-fn repaint_tui<App: TuiApp>(
+fn repaint_tui<App, Global, Action, Error>(
     app: &mut App,
-    ctx: &mut AppContext<'_, App>,
+    ctx: &mut AppContext<'_, Global, Action, Error>,
     term: &mut Terminal<CrosstermBackend<Stdout>>,
     reason: RepaintEvent,
-    data: &mut App::Data,
     state: &mut App::State,
-) -> Result<Control<App::Action>, App::Error>
+) -> Result<Control<Action>, Error>
 where
-    App::Error: From<io::Error>,
+    App: AppWidget<Global, Action, Error>,
+    Error: From<io::Error>,
 {
     let mut res = Ok(Control::Continue);
 
@@ -476,7 +449,6 @@ where
         let frame_area = frame.size();
         let mut ctx = RenderContext {
             g: ctx.g,
-            theme: ctx.theme,
             timers: ctx.timers,
             tasks: ctx.tasks.clone(),
             queue: ctx.queue,
@@ -488,7 +460,7 @@ where
         };
 
         res = app
-            .render(&mut ctx, &reason, frame_area, data, state)
+            .render(&mut ctx, &reason, frame_area, state)
             .map(|_| Control::Continue);
 
         if let Some((cursor_x, cursor_y)) = ctx.cursor {
@@ -513,12 +485,12 @@ where
     }
 }
 
-fn poll_timers<App: TuiApp>(ctx: &AppContext<'_, App>) -> bool {
-    ctx.timers.poll()
+fn poll_timers(timers: &Timers) -> bool {
+    timers.poll()
 }
 
-fn read_timers<App: TuiApp>(ctx: &AppContext<'_, App>) -> Option<TimerEvent> {
-    ctx.timers.read()
+fn read_timers(timers: &Timers) -> Option<TimerEvent> {
+    timers.read()
 }
 
 fn poll_workers<Action, Error>(worker: &ThreadPool<Action, Error>) -> bool
@@ -551,8 +523,8 @@ where
     }
 }
 
-fn calculate_sleep<App: TuiApp>(ctx: &mut AppContext<'_, App>, max: Duration) -> Duration {
-    if let Some(sleep) = ctx.timers.sleep_time() {
+fn calculate_sleep(timers: &Timers, max: Duration) -> Duration {
+    if let Some(sleep) = timers.sleep_time() {
         min(sleep, max)
     } else {
         max

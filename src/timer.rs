@@ -5,10 +5,14 @@ use std::time::{Duration, Instant};
 
 /// Holds all the timers.
 #[derive(Debug, Default)]
-pub struct Timers {
+pub(crate) struct Timers {
     tags: Cell<usize>,
     timers: RefCell<Vec<TimerImpl>>,
 }
+
+/// Handle for a submitted timer.
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct TimerHandle(usize);
 
 #[derive(Debug)]
 struct TimerImpl {
@@ -21,12 +25,8 @@ struct TimerImpl {
 }
 
 impl Timers {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
     /// Returns the next sleep time.
-    pub fn sleep_time(&self) -> Option<Duration> {
+    pub(crate) fn sleep_time(&self) -> Option<Duration> {
         let timers = self.timers.borrow();
         if let Some(timer) = timers.last() {
             let now = Instant::now();
@@ -41,7 +41,7 @@ impl Timers {
     }
 
     /// Polls for the next timer event.
-    pub fn poll(&self) -> bool {
+    pub(crate) fn poll(&self) -> bool {
         let timers = self.timers.borrow();
         if let Some(timer) = timers.last() {
             Instant::now() >= timer.next
@@ -52,7 +52,7 @@ impl Timers {
 
     /// Polls for the next timer event.
     /// Removes/recalculates the event and reorders the queue.
-    pub fn read(&self) -> Option<TimerEvent> {
+    pub(crate) fn read(&self) -> Option<TimerEvent> {
         let timer = self.timers.borrow_mut().pop();
         if let Some(mut timer) = timer {
             if Instant::now() >= timer.next {
@@ -102,7 +102,7 @@ impl Timers {
 
     /// Add a timer.
     #[must_use]
-    pub fn add(&self, t: TimerDef) -> usize {
+    pub(crate) fn add(&self, t: TimerDef) -> TimerHandle {
         let tag = self.tags.get() + 1;
         self.tags.set(tag);
 
@@ -116,14 +116,14 @@ impl Timers {
         };
         self.add_impl(t);
 
-        tag
+        TimerHandle(tag)
     }
 
     /// Remove a timer.
-    pub fn remove(&self, tag: usize) {
+    pub(crate) fn remove(&self, tag: TimerHandle) {
         let mut timer = self.timers.borrow_mut();
         for i in 0..timer.len() {
-            if timer[i].tag == tag {
+            if timer[i].tag == tag.0 {
                 timer.remove(i);
                 break;
             }

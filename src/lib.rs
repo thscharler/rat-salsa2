@@ -8,8 +8,8 @@ use rat_widget::menuline::MenuOutcome;
 mod framework;
 mod timer;
 
-pub use framework::{run_tui, AppContext, AppEvents, AppWidget, RenderContext, RunConfig, TuiApp};
-pub use timer::{TimeOut, TimerDef, TimerEvent, Timers};
+pub use framework::{run_tui, AppContext, AppEvents, AppWidget, RenderContext, RunConfig};
+pub use timer::{TimeOut, TimerDef, TimerEvent, TimerHandle};
 
 /// Result type for most event-handling functions.
 ///
