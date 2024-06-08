@@ -41,10 +41,11 @@ pub trait AppWidget<Global, Action, Error> {
     /// Renders an application widget.
     fn render(
         &mut self,
-        ctx: &mut RenderContext<'_, Global, Action, Error>,
         event: &RepaintEvent,
         area: Rect,
+        buf: &mut Buffer,
         state: &mut Self::State,
+        ctx: &mut RenderContext<'_, Global, Action, Error>,
     ) -> Result<(), Error>;
 }
 
@@ -64,8 +65,8 @@ pub trait AppEvents<Global, Action, Error> {
     /// Timeout event.
     fn timer(
         &mut self,
-        ctx: &mut AppContext<'_, Global, Action, Error>,
         event: &TimeOut,
+        ctx: &mut AppContext<'_, Global, Action, Error>,
     ) -> Result<Control<Action>, Error> {
         Ok(Control::Continue)
     }
@@ -73,8 +74,8 @@ pub trait AppEvents<Global, Action, Error> {
     /// Crossterm event.
     fn crossterm(
         &mut self,
-        ctx: &mut AppContext<'_, Global, Action, Error>,
         event: &crossterm::event::Event,
+        ctx: &mut AppContext<'_, Global, Action, Error>,
     ) -> Result<Control<Action>, Error> {
         Ok(Control::Continue)
     }
@@ -82,8 +83,8 @@ pub trait AppEvents<Global, Action, Error> {
     /// Run an action.
     fn action(
         &mut self,
-        ctx: &mut AppContext<'_, Global, Action, Error>,
         event: &mut Action,
+        ctx: &mut AppContext<'_, Global, Action, Error>,
     ) -> Result<Control<Action>, Error> {
         Ok(Control::Continue)
     }
@@ -91,8 +92,8 @@ pub trait AppEvents<Global, Action, Error> {
     /// Do error handling.
     fn error(
         &self,
-        ctx: &mut AppContext<'_, Global, Action, Error>,
         event: Error,
+        ctx: &mut AppContext<'_, Global, Action, Error>,
     ) -> Result<Control<Action>, Error> {
         Ok(Control::Continue)
     }
@@ -171,8 +172,6 @@ pub struct RenderContext<'a, Global, Action, Error> {
     pub counter: usize,
     /// Frame area.
     pub area: Rect,
-    /// Buffer.
-    pub buffer: &'a mut Buffer,
     /// Output cursor position. Set after rendering is complete.
     pub cursor: Option<(u16, u16)>,
 
@@ -206,22 +205,6 @@ impl<'a, Global, Action, Error> RenderContext<'a, Global, Action, Error> {
     #[inline]
     pub fn queue(&self, ctrl: impl Into<Control<Action>>) {
         self.queue.queue(ctrl.into())
-    }
-
-    /// Clone with a new buffer.
-    #[inline]
-    pub fn clone_with(&self, buffer: &'a mut Buffer) -> Self {
-        Self {
-            g: self.g,
-            timers: self.timers,
-            tasks: self.tasks.clone(),
-            queue: self.queue,
-            counter: 0,
-            area: buffer.area,
-            buffer,
-            cursor: None,
-            non_exhaustive: NonExhaustive,
-        }
     }
 }
 
@@ -388,14 +371,14 @@ where
                             RepaintEvent::Timer(evt),
                             state,
                         ),
-                        Some(TimerEvent::Application(evt)) => state.timer(&mut appctx, &evt),
+                        Some(TimerEvent::Application(evt)) => state.timer(&evt, &mut appctx),
                         None => Ok(Control::Continue),
                     },
 
                     Some(PollNext::Workers) => read_workers(&worker),
 
                     Some(PollNext::Crossterm) => match read_crossterm() {
-                        Ok(event) => state.crossterm(&mut appctx, &event),
+                        Ok(event) => state.crossterm(&event, &mut appctx),
                         Err(e) => Err(e),
                     },
                 }
@@ -414,9 +397,9 @@ where
                 RepaintEvent::Repaint,
                 state,
             ),
-            Ok(Control::Action(mut action)) => state.action(&mut appctx, &mut action),
+            Ok(Control::Action(mut action)) => state.action(&mut action, &mut appctx),
             Ok(Control::Quit) => break 'ui true,
-            Err(e) => state.error(&mut appctx, e),
+            Err(e) => state.error(e, &mut appctx),
         }
     };
 
@@ -454,13 +437,12 @@ where
             queue: ctx.queue,
             counter: frame.count(),
             area: frame_area,
-            buffer: frame.buffer_mut(),
             cursor: None,
             non_exhaustive: NonExhaustive,
         };
 
         res = app
-            .render(&mut ctx, &reason, frame_area, state)
+            .render(&reason, frame_area, frame.buffer_mut(), state, &mut ctx)
             .map(|_| Control::Continue);
 
         if let Some((cursor_x, cursor_y)) = ctx.cursor {

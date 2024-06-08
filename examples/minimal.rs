@@ -137,9 +137,9 @@ impl AppEvents<GlobalState, MinimalAction, Error> for MinimalState {
 
     fn timer(
         &mut self,
-        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
         event: &TimeOut,
-    ) -> Result<Control<MinimalAction>, Error> {
+        ctx: &mut AppContext<'_, Global, Action, Error>,
+    ) -> Result<Control<Action>, Error> {
         Ok(Control::Continue)
     }
 
