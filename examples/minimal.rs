@@ -7,17 +7,19 @@ use crossterm::event::Event;
 #[allow(unused_imports)]
 use log::debug;
 use rat_salsa2::event::RepaintEvent;
-use rat_salsa2::{
-    run_tui, AppContext, AppEvents, AppWidget, Control, RenderContext, RunConfig, TimeOut,
-};
-use rat_widget::event::{ct_event, flow, flow_ok, FocusKeys, HandleEvent};
+use rat_salsa2::{run_tui, AppEvents, AppWidget, Control, RunConfig, TimeOut};
+use rat_widget::event::{ct_event, flow_ok, FocusKeys, HandleEvent};
 use rat_widget::msgdialog::{MsgDialog, MsgDialogState};
 use rat_widget::statusline::{StatusLine, StatusLineState};
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::widgets::StatefulWidget;
 use std::cell::RefCell;
 use std::fs;
 use std::time::{Duration, SystemTime};
+
+type AppContext<'a> = rat_salsa2::AppContext<'a, GlobalState, MinimalAction, Error>;
+type RenderContext<'a> = rat_salsa2::RenderContext<'a, GlobalState, MinimalAction, Error>;
 
 fn main() -> Result<(), Error> {
     setup_logging()?;
@@ -87,10 +89,11 @@ impl AppWidget<GlobalState, MinimalAction, Error> for MinimalApp {
 
     fn render(
         &mut self,
-        ctx: &mut RenderContext<'_, GlobalState, MinimalAction, Error>,
         event: &RepaintEvent,
         area: Rect,
+        buf: &mut Buffer,
         state: &mut Self::State,
+        ctx: &mut RenderContext<'_>,
     ) -> Result<(), Error> {
         let t0 = SystemTime::now();
 
@@ -100,11 +103,11 @@ impl AppWidget<GlobalState, MinimalAction, Error> for MinimalApp {
         )
         .split(area);
 
-        Mask0.render(ctx, event, r[0], &mut state.mask0)?;
+        Mask0.render(event, r[0], buf, &mut state.mask0, ctx)?;
 
         if ctx.g.error_dlg.borrow().active {
             let err = MsgDialog::new().styles(ctx.g.theme.status_dialog_style());
-            err.render(r[0], ctx.buffer, &mut ctx.g.error_dlg.borrow_mut());
+            err.render(r[0], buf, &mut ctx.g.error_dlg.borrow_mut());
         }
 
         let el = t0.elapsed().unwrap_or(Duration::from_nanos(0));
@@ -121,32 +124,29 @@ impl AppWidget<GlobalState, MinimalAction, Error> for MinimalApp {
                 Constraint::Length(12),
             ])
             .styles(ctx.g.theme.statusline_style());
-        status.render(r[1], ctx.buffer, &mut ctx.g.status.borrow_mut());
+        status.render(r[1], buf, &mut ctx.g.status.borrow_mut());
 
         Ok(())
     }
 }
 
 impl AppEvents<GlobalState, MinimalAction, Error> for MinimalState {
-    fn init(
-        &mut self,
-        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
-    ) -> Result<(), Error> {
+    fn init(&mut self, ctx: &mut AppContext<'_>) -> Result<(), Error> {
         Ok(())
     }
 
     fn timer(
         &mut self,
         event: &TimeOut,
-        ctx: &mut AppContext<'_, Global, Action, Error>,
-    ) -> Result<Control<Action>, Error> {
+        ctx: &mut AppContext<'_>,
+    ) -> Result<Control<MinimalAction>, Error> {
         Ok(Control::Continue)
     }
 
     fn crossterm(
         &mut self,
-        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
         event: &Event,
+        ctx: &mut AppContext<'_>,
     ) -> Result<Control<MinimalAction>, Error> {
         use crossterm::event::*;
 
@@ -170,7 +170,7 @@ impl AppEvents<GlobalState, MinimalAction, Error> for MinimalState {
             }
         });
 
-        flow_ok!(self.mask0.crossterm(ctx, &event)?);
+        flow_ok!(self.mask0.crossterm(&event, ctx)?);
 
         let el = t0.elapsed().unwrap_or(Duration::from_nanos(0));
         ctx.g
@@ -183,8 +183,8 @@ impl AppEvents<GlobalState, MinimalAction, Error> for MinimalState {
 
     fn action(
         &mut self,
-        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
         event: &mut MinimalAction,
+        ctx: &mut AppContext<'_>,
     ) -> Result<Control<MinimalAction>, Error> {
         let t0 = SystemTime::now();
 
@@ -207,8 +207,8 @@ impl AppEvents<GlobalState, MinimalAction, Error> for MinimalState {
 
     fn error(
         &self,
-        ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
         event: Error,
+        ctx: &mut AppContext<'_>,
     ) -> Result<Control<MinimalAction>, Error> {
         ctx.g
             .error_dlg
@@ -219,24 +219,25 @@ impl AppEvents<GlobalState, MinimalAction, Error> for MinimalState {
 }
 
 mod mask0 {
-    use crate::{GlobalState, MinimalAction};
+    use crate::{AppContext, GlobalState, MinimalAction, RenderContext};
     use anyhow::Error;
     use crossterm::event::Event;
     #[allow(unused_imports)]
     use log::debug;
     use rat_salsa2::event::RepaintEvent;
-    use rat_salsa2::{AppContext, AppEvents, AppWidget, Control, RenderContext};
-    use rat_widget::event::{flow, flow_ok, FocusKeys, HandleEvent};
-    use rat_widget::menuline::{MenuLine, MenuLineState, MenuOutcome};
+    use rat_salsa2::{AppEvents, AppWidget, Control};
+    use rat_widget::event::{flow_ok, FocusKeys, HandleEvent};
+    use rat_widget::menuline::{MenuOutcome, RMenuLine, RMenuLineState};
+    use ratatui::buffer::Buffer;
     use ratatui::layout::{Constraint, Direction, Layout, Rect};
     use ratatui::widgets::StatefulWidget;
 
     #[derive(Debug)]
-    pub struct Mask0;
+    pub(crate) struct Mask0;
 
     #[derive(Debug)]
     pub struct Mask0State {
-        pub menu: MenuLineState,
+        pub menu: RMenuLineState,
     }
 
     impl Default for Mask0State {
@@ -254,10 +255,11 @@ mod mask0 {
 
         fn render(
             &mut self,
-            ctx: &mut RenderContext<'_, GlobalState, MinimalAction, Error>,
             event: &RepaintEvent,
             area: Rect,
+            buf: &mut Buffer,
             state: &mut Self::State,
+            ctx: &mut RenderContext<'_>,
         ) -> Result<(), Error> {
             // TODO: repaint_mask
 
@@ -267,13 +269,13 @@ mod mask0 {
             )
             .split(area);
 
-            let menu = MenuLine::new()
+            let menu = RMenuLine::new()
                 .styles(ctx.g.theme.menu_style())
                 .add("One")
                 .add("Two")
                 .add("Three")
                 .add("_Quit");
-            menu.render(r[1], ctx.buffer, &mut state.menu);
+            menu.render(r[1], buf, &mut state.menu);
 
             Ok(())
         }
@@ -282,8 +284,8 @@ mod mask0 {
     impl AppEvents<GlobalState, MinimalAction, Error> for Mask0State {
         fn crossterm(
             &mut self,
-            ctx: &mut AppContext<'_, GlobalState, MinimalAction, Error>,
             event: &Event,
+            ctx: &mut AppContext<'_>,
         ) -> Result<Control<MinimalAction>, Error> {
             // TODO: handle_mask
             flow_ok!(match self.menu.handle(event, FocusKeys) {
