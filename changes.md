@@ -1,3 +1,18 @@
+# 0.20.2
+
+* complete refactor:
+    * throw away TuiApp completely. It got fat&ugly lately.
+    * Drastically reduce the number of used types, don't need
+      Data and Theme, those can go into Global as an implementation detail.
+
+  With everything down to three types Global, Action and Error use them directly.
+  Everything is still tied together via AppContext and RenderContext.
+
+* refactor: hide timer in the context structs and add the necessary access
+  functions, add and remove.
+* refactor: make Timers private and add a TimerHandle for deletion.
+* AppContext and RenderContext: queue and tasks need not be public.
+
 # 0.20.1
 
 * Extend tasks with cancellation support.

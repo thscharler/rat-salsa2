@@ -126,6 +126,10 @@ impl<Action> From<EditOutcome> for Control<Action> {
             EditOutcome::Remove => Control::Break,
             EditOutcome::Edit => Control::Break,
             EditOutcome::Append => Control::Break,
+            EditOutcome::Cancel => Control::Break,
+            EditOutcome::Commit => Control::Break,
+            EditOutcome::CommitAndAppend => Control::Break,
+            EditOutcome::CommitAndEdit => Control::Break,
         }
     }
 }
